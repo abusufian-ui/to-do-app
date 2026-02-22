@@ -1,13 +1,52 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import {
+  Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   useColorScheme,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+// IMPORT YOUR BRAND NEW UCP LOGO
+import UCPLogo from "../../components/UCPLogo";
+
+// --- Pure Monochrome Theme ---
+const Colors = {
+  light: {
+    background: "#FFFFFF",
+    text: "#000000",
+    subtext: "#737373",
+    border: "#E5E5E5",
+    card: "#FAFAFA",
+    invertedBg: "#000000",
+    invertedText: "#FFFFFF",
+    invertedSubtext: "#A3A3A3",
+  },
+  dark: {
+    background: "#000000",
+    text: "#FFFFFF",
+    subtext: "#A3A3A3",
+    border: "#262626",
+    card: "#0A0A0A",
+    invertedBg: "#FFFFFF",
+    invertedText: "#000000",
+    invertedSubtext: "#737373",
+  },
+};
+
+// --- Mock Data: Full Daily Schedule ---
+const stats = { cgpa: "3.64", credits: "84" };
+const nextClass = {
+  name: "Differential Equations",
+  time: "10:00 AM",
+  room: "R-105",
+  startsIn: "45 mins",
+};
 
 const todaysClasses = [
   {
@@ -15,332 +54,453 @@ const todaysClasses = [
     name: "Operating Systems",
     type: "Lab",
     time: "08:30 AM",
+    endTime: "09:50 AM",
     room: "L-402",
-    color: "#38BDF8",
   },
   {
     id: "2",
-    name: "Diff. Equations",
+    name: "Differential Equations",
     type: "Lecture",
     time: "10:00 AM",
+    endTime: "11:20 AM",
     room: "R-105",
-    color: "#A855F7",
   },
   {
     id: "3",
-    name: "Software Eng.",
+    name: "Software Engineering",
     type: "Lecture",
     time: "11:30 AM",
+    endTime: "12:50 PM",
     room: "R-201",
-    color: "#F59E0B",
   },
   {
     id: "4",
-    name: "Game Dev",
+    name: "Game Dev (Unity)",
     type: "Lab",
     time: "01:00 PM",
+    endTime: "02:20 PM",
     room: "L-304",
-    color: "#10B981",
   },
   {
     id: "5",
     name: "DAA",
     type: "Lecture",
     time: "02:30 PM",
+    endTime: "03:50 PM",
     room: "R-110",
-    color: "#EF4444",
   },
 ];
 
 const todaysTasks = [
-  { id: "1", text: "Submit OS Lab Report", done: true },
-  { id: "2", text: "Revise Diff. Equations Ch 4", done: false },
-  { id: "3", text: "Draft UI for THE ZETA AI", done: false },
-  { id: "4", text: "Review MERN API endpoints", done: false },
+  {
+    id: "1",
+    text: "Initialize The Zeta AI repository",
+    course: "FYP",
+    done: true,
+  },
+  {
+    id: "2",
+    text: "Deploy web portal frontend to Vercel",
+    course: "Web Dev",
+    done: false,
+  },
+  {
+    id: "3",
+    text: "Complete OS Lab Report",
+    course: "Operating Systems",
+    done: false,
+  },
 ];
 
-const Colors = {
-  light: {
-    background: "#F1F5F9",
-    card: "#FFFFFF",
-    text: "#0F172A",
-    subtext: "#64748B",
-    border: "#E2E8F0",
-    priorityBg: "#EEF2FF",
-    priorityBorder: "#C7D2FE",
-    roomBadgeBg: "#F1F5F9",
-    roomBadgeText: "#475569",
-    iconColor: "#0F172A",
-  },
-  dark: {
-    background: "#020617",
-    card: "#0F172A",
-    text: "#F8FAFC",
-    subtext: "#94A3B8",
-    border: "#1E293B",
-    priorityBg: "#1E1B4B",
-    priorityBorder: "#312E81",
-    roomBadgeBg: "#1E293B",
-    roomBadgeText: "#E2E8F0",
-    iconColor: "#F8FAFC",
-  },
-};
-
 export default function HomeScreen() {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
-  const theme = isDark ? Colors.dark : Colors.light;
-
+  const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
 
-  return (
-    <View style={styles.mainContainer}>
-      {isDark && <View style={styles.glowTop} />}
+  const insets = useSafeAreaInsets();
 
+  // THE FIX: Directly grab Android's native hardware status bar height.
+  // If on iOS, it falls back to the safe area insets.
+  const statusBarHeight =
+    Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
+
+  const today = new Date()
+    .toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    })
+    .toUpperCase();
+
+  return (
+    // Apply the foolproof statusBarHeight to the wrapper View
+    <View style={[styles.safeArea, { paddingTop: statusBarHeight }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* --- HEADER --- */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.dateText}>SATURDAY, FEB 14</Text>
-            <Text style={styles.greeting}>Welcome Sufi</Text>
+            <Text style={styles.dateText}>{today}</Text>
+            <Text style={styles.greeting}>Abu Sufian</Text>
+            <Text style={styles.subtitle}>BSCS Command Center</Text>
           </View>
-          <TouchableOpacity style={styles.profilePic}>
-            <Ionicons name="person" size={20} color={theme.background} />
+          <TouchableOpacity style={styles.profileAvatar}>
+            <Text style={styles.avatarText}>AS</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Today's Schedule</Text>
-          <Text style={styles.sectionSubtitle}>
-            {todaysClasses.length} Classes
-          </Text>
+        {/* --- BENTO GRID ARCHITECTURE --- */}
+        <View style={styles.bentoContainer}>
+          <View style={[styles.bentoBox, styles.heroBox]}>
+            <View style={styles.heroHeader}>
+              <View style={styles.liveBadge}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>UP NEXT</Text>
+              </View>
+              <Ionicons
+                name="notifications-outline"
+                size={20}
+                color={theme.invertedText}
+              />
+            </View>
+            <Text style={styles.heroTitle}>{nextClass.name}</Text>
+            <Text style={styles.heroSub}>
+              Starts in {nextClass.startsIn} • Room {nextClass.room}
+            </Text>
+          </View>
+
+          <View style={styles.subGrid}>
+            <View style={[styles.bentoBox, styles.halfBox]}>
+              <Ionicons
+                name="school-outline"
+                size={24}
+                color={theme.text}
+                style={styles.bentoIcon}
+              />
+              <Text style={styles.bentoValue}>{stats.cgpa}</Text>
+              <Text style={styles.bentoLabel}>Current CGPA</Text>
+            </View>
+            <View style={[styles.bentoBox, styles.halfBox]}>
+              <Ionicons
+                name="checkbox-outline"
+                size={24}
+                color={theme.text}
+                style={styles.bentoIcon}
+              />
+              <Text style={styles.bentoValue}>1 / 3</Text>
+              <Text style={styles.bentoLabel}>Tasks Done</Text>
+            </View>
+          </View>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.carouselContainer}
-        >
-          {todaysClasses.map((cls) => (
-            <View
-              key={cls.id}
-              style={[styles.classCard, { borderTopColor: cls.color }]}
-            >
-              <View style={styles.classCardTop}>
-                <Ionicons name="time-outline" size={14} color={theme.subtext} />
-                <Text style={styles.classTime}>{cls.time}</Text>
+        {/* --- FULL DAILY SCHEDULE (VERTICAL TIMELINE) --- */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Today's Schedule</Text>
+        </View>
+
+        <View style={styles.timelineContainer}>
+          {todaysClasses.map((cls, index) => (
+            <View key={cls.id} style={styles.timelineRow}>
+              {/* Left Side: Time & Line */}
+              <View style={styles.timelineLeft}>
+                <Text style={styles.timelineTime}>{cls.time}</Text>
+                {/* Don't show the connecting line after the last class */}
+                {index !== todaysClasses.length - 1 && (
+                  <View style={styles.timelineLine} />
+                )}
+                <View style={styles.timelineDot} />
               </View>
-              <Text style={styles.className} numberOfLines={2}>
-                {cls.name}
-              </Text>
-              <View style={styles.classCardBottom}>
-                <Text style={styles.classType}>{cls.type}</Text>
-                <View style={styles.roomBadge}>
-                  <Text style={styles.roomText}>{cls.room}</Text>
+
+              {/* Right Side: Class Details Card */}
+              <View style={styles.timelineCard}>
+                {/* The UCP Logo & Subject Name Row */}
+                <View style={styles.courseHeaderRow}>
+                  <UCPLogo
+                    width={18}
+                    height={18}
+                    color={theme.text}
+                    style={styles.ucpIcon}
+                  />
+                  <Text style={styles.className} numberOfLines={1}>
+                    {cls.name}
+                  </Text>
+                </View>
+
+                <View style={styles.classFooter}>
+                  <Text style={styles.classDuration}>
+                    {cls.time} - {cls.endTime}
+                  </Text>
+                  <View style={styles.roomBadge}>
+                    <Text style={styles.roomText}>{cls.room}</Text>
+                  </View>
                 </View>
               </View>
             </View>
           ))}
-        </ScrollView>
-
-        <View style={[styles.bentoBox, styles.priorityBox]}>
-          <View style={styles.priorityHeader}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>URGENT</Text>
-            </View>
-            <Ionicons
-              name="ellipsis-horizontal"
-              size={20}
-              color={theme.subtext}
-            />
-          </View>
-          <Text style={styles.priorityTask}>Complete DAA Graph Algorithms</Text>
-          <Text style={styles.prioritySub}>Due tonight at 11:59 PM</Text>
         </View>
 
-        <View style={styles.bentoBox}>
-          <View style={styles.taskHeaderRow}>
-            <Text style={styles.boxLabel}>Action Items</Text>
-            <TouchableOpacity>
-              <Text style={styles.viewAllText}>View All</Text>
-            </TouchableOpacity>
-          </View>
+        {/* --- ACTION ITEMS LIST --- */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Action Items</Text>
+          <TouchableOpacity>
+            <Text style={styles.linkText}>View All</Text>
+          </TouchableOpacity>
+        </View>
 
-          {todaysTasks.slice(0, 3).map((task) => (
-            <View key={task.id} style={styles.taskRow}>
-              <Ionicons
-                name={task.done ? "checkmark-circle" : "ellipse-outline"}
-                size={22}
-                color={task.done ? "#10B981" : theme.subtext}
-              />
-              <Text style={[styles.taskText, task.done && styles.taskTextDone]}>
-                {task.text}
-              </Text>
-            </View>
+        <View style={styles.taskList}>
+          {todaysTasks.map((task, index) => (
+            <TouchableOpacity
+              key={task.id}
+              style={[
+                styles.taskRow,
+                index === todaysTasks.length - 1 && { borderBottomWidth: 0 },
+              ]}
+            >
+              <View style={[styles.checkbox, task.done && styles.checkboxDone]}>
+                {task.done && (
+                  <Ionicons
+                    name="checkmark"
+                    size={14}
+                    color={theme.invertedText}
+                  />
+                )}
+              </View>
+              <View style={styles.taskInfo}>
+                <Text
+                  style={[styles.taskText, task.done && styles.taskTextDone]}
+                >
+                  {task.text}
+                </Text>
+                <Text style={styles.taskCourse}>{task.course}</Text>
+              </View>
+            </TouchableOpacity>
           ))}
-          {todaysTasks.length > 3 && (
-            <Text style={styles.moreTasksText}>
-              + {todaysTasks.length - 3} more tasks today
-            </Text>
-          )}
         </View>
       </ScrollView>
     </View>
   );
 }
 
-// FIXED: Added : any to the theme variable
 const getStyles = (theme: any) =>
   StyleSheet.create({
-    mainContainer: { flex: 1, backgroundColor: theme.background },
-    glowTop: {
-      position: "absolute",
-      top: -100,
-      left: -50,
-      width: 300,
-      height: 300,
-      backgroundColor: "#38BDF8",
-      opacity: 0.15,
-      borderRadius: 150,
-    },
-    scrollContent: { paddingTop: 60, paddingBottom: 100 },
+    safeArea: { flex: 1, backgroundColor: theme.background },
+    scrollContent: { paddingTop: 20, paddingBottom: 100 },
+
     header: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: 25,
-      paddingHorizontal: 20,
+      paddingHorizontal: 24,
+      marginBottom: 30,
     },
     dateText: {
-      color: "#38BDF8",
+      color: theme.subtext,
       fontSize: 12,
-      fontWeight: "800",
+      fontWeight: "700",
       letterSpacing: 1.5,
-      marginBottom: 4,
+      marginBottom: 6,
     },
     greeting: {
-      fontSize: 28,
-      fontWeight: "bold",
+      fontSize: 32,
+      fontWeight: "800",
       color: theme.text,
-      letterSpacing: -0.5,
+      letterSpacing: -1,
+      marginBottom: 4,
     },
-    profilePic: {
-      width: 45,
-      height: 45,
-      backgroundColor: "#38BDF8",
-      borderRadius: 22.5,
-      alignItems: "center",
+    subtitle: { fontSize: 16, color: theme.subtext, fontWeight: "500" },
+    profileAvatar: {
+      width: 52,
+      height: 52,
+      borderRadius: 18,
+      backgroundColor: theme.invertedBg,
       justifyContent: "center",
+      alignItems: "center",
     },
+    avatarText: { color: theme.invertedText, fontSize: 20, fontWeight: "800" },
+
+    bentoContainer: { paddingHorizontal: 24, gap: 16, marginBottom: 35 },
+    bentoBox: {
+      borderRadius: 24,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: theme.border,
+      backgroundColor: theme.card,
+    },
+    heroBox: {
+      backgroundColor: theme.invertedBg,
+      borderColor: theme.invertedBg,
+      padding: 24,
+    },
+    heroHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 20,
+    },
+    liveBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: "rgba(255,255,255,0.2)",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+      gap: 6,
+    },
+    liveDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.invertedText,
+    },
+    liveText: {
+      color: theme.invertedText,
+      fontSize: 11,
+      fontWeight: "800",
+      letterSpacing: 1,
+    },
+    heroTitle: {
+      fontSize: 26,
+      fontWeight: "800",
+      color: theme.invertedText,
+      letterSpacing: -0.5,
+      marginBottom: 8,
+    },
+    heroSub: { fontSize: 15, color: theme.invertedSubtext, fontWeight: "500" },
+
+    subGrid: { flexDirection: "row", gap: 16 },
+    halfBox: { flex: 1, height: 140, justifyContent: "space-between" },
+    bentoIcon: { marginBottom: 10 },
+    bentoValue: {
+      fontSize: 28,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -1,
+    },
+    bentoLabel: { fontSize: 13, color: theme.subtext, fontWeight: "600" },
+
     sectionHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "flex-end",
-      paddingHorizontal: 20,
-      marginBottom: 15,
+      paddingHorizontal: 24,
+      marginBottom: 20,
     },
-    sectionTitle: { fontSize: 18, fontWeight: "bold", color: theme.text },
-    sectionSubtitle: { fontSize: 14, color: theme.subtext },
-    carouselContainer: { paddingHorizontal: 20, paddingBottom: 25, gap: 15 },
-    classCard: {
-      backgroundColor: theme.card,
-      borderRadius: 16,
-      padding: 16,
-      width: 160,
-      borderWidth: 1,
-      borderColor: theme.border,
-      borderTopWidth: 4,
-    },
-    classCardTop: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginBottom: 10,
-      gap: 5,
-    },
-    classTime: { color: theme.subtext, fontSize: 12, fontWeight: "600" },
-    className: {
-      fontSize: 16,
-      fontWeight: "bold",
+    sectionTitle: {
+      fontSize: 22,
+      fontWeight: "800",
       color: theme.text,
-      height: 40,
-      marginBottom: 10,
+      letterSpacing: -0.5,
     },
-    classCardBottom: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
+    linkText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: theme.subtext,
+      textDecorationLine: "underline",
     },
-    classType: { color: theme.subtext, fontSize: 12 },
-    roomBadge: {
-      backgroundColor: theme.roomBadgeBg,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 6,
-    },
-    roomText: { color: theme.roomBadgeText, fontSize: 10, fontWeight: "bold" },
-    bentoBox: {
-      backgroundColor: theme.card,
-      borderRadius: 24,
-      padding: 20,
-      marginHorizontal: 20,
-      marginBottom: 15,
-      borderWidth: 1,
-      borderColor: theme.border,
-    },
-    priorityBox: {
-      backgroundColor: theme.priorityBg,
-      borderColor: theme.priorityBorder,
-    },
-    priorityHeader: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 15,
-    },
-    badge: {
-      backgroundColor: "rgba(239, 68, 68, 0.1)",
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      borderRadius: 8,
-    },
-    badgeText: {
-      color: "#EF4444",
-      fontSize: 10,
-      fontWeight: "bold",
-      letterSpacing: 1,
-    },
-    priorityTask: {
-      fontSize: 18,
-      fontWeight: "bold",
+
+    // --- TIMELINE STYLES ---
+    timelineContainer: { paddingHorizontal: 24, paddingBottom: 35 },
+    timelineRow: { flexDirection: "row", marginBottom: 16 },
+    timelineLeft: { width: 70, alignItems: "center", marginRight: 15 },
+    timelineTime: {
+      fontSize: 13,
+      fontWeight: "700",
       color: theme.text,
       marginBottom: 8,
     },
-    prioritySub: { color: theme.subtext, fontSize: 14 },
-    taskHeaderRow: {
+    timelineDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: theme.invertedBg,
+      position: "absolute",
+      top: 22,
+    },
+    timelineLine: {
+      width: 2,
+      backgroundColor: theme.border,
+      position: "absolute",
+      top: 34,
+      bottom: -20,
+    },
+
+    timelineCard: {
+      flex: 1,
+      backgroundColor: theme.card,
+      borderRadius: 20,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+
+    // UCP Icon & Course Name Wrapper
+    courseHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    ucpIcon: { marginRight: 8 },
+    className: {
+      fontSize: 17,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -0.5,
+      flex: 1,
+    },
+
+    classFooter: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: 15,
     },
-    boxLabel: { color: theme.subtext, fontSize: 14, fontWeight: "600" },
-    viewAllText: { color: "#38BDF8", fontSize: 13, fontWeight: "600" },
+    classDuration: { fontSize: 13, fontWeight: "600", color: theme.subtext },
+    roomBadge: {
+      backgroundColor: theme.background,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    roomText: { color: theme.text, fontSize: 11, fontWeight: "800" },
+
+    taskList: {
+      marginHorizontal: 24,
+      backgroundColor: theme.card,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: theme.border,
+      padding: 8,
+    },
     taskRow: {
       flexDirection: "row",
       alignItems: "center",
-      paddingVertical: 10,
+      padding: 16,
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
-      gap: 12,
+      gap: 16,
     },
-    taskText: { color: theme.text, fontSize: 15, flex: 1 },
+    checkbox: {
+      width: 24,
+      height: 24,
+      borderRadius: 8,
+      borderWidth: 2,
+      borderColor: theme.border,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    checkboxDone: {
+      backgroundColor: theme.invertedBg,
+      borderColor: theme.invertedBg,
+    },
+    taskInfo: { flex: 1 },
+    taskText: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: theme.text,
+      marginBottom: 4,
+    },
     taskTextDone: { color: theme.subtext, textDecorationLine: "line-through" },
-    moreTasksText: {
-      color: theme.subtext,
-      fontSize: 13,
-      textAlign: "center",
-      marginTop: 15,
-      fontStyle: "italic",
-    },
+    taskCourse: { fontSize: 13, color: theme.subtext, fontWeight: "500" },
   });

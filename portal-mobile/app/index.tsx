@@ -2,10 +2,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
 import {
-    ActivityIndicator,
-    StyleSheet,
-    useColorScheme,
-    View,
+  ActivityIndicator,
+  StyleSheet,
+  useColorScheme,
+  View,
 } from "react-native";
 
 export default function RootIndex() {
