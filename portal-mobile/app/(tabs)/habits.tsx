@@ -38,10 +38,8 @@ const Colors = {
   },
 };
 
-// --- NATIVE LIVE TIMER FOR BAD HABITS ---
 const LiveTimer = ({ startDate }: { startDate: string }) => {
   const [time, setTime] = useState({ days: 0, hours: 0, mins: 0 });
-
   useEffect(() => {
     const interval = setInterval(() => {
       const diff = new Date().getTime() - new Date(startDate).getTime();
@@ -143,16 +141,24 @@ export default function HabitsScreen() {
 
   const fetchHabits = async () => {
     try {
+      const cHabits = await AsyncStorage.getItem("off_habits_data");
+      if (cHabits) {
+        setHabits(JSON.parse(cHabits));
+        setIsLoading(false);
+      }
+
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
-      if (!BACKEND_URL || !token) return;
+      if (!BACKEND_URL || !token) return setIsLoading(false);
 
       const res = await axios.get(`${BACKEND_URL}/habits`, {
         headers: { "x-auth-token": token },
       });
-      setHabits(Array.isArray(res.data) ? res.data : []);
+      const freshData = Array.isArray(res.data) ? res.data : [];
+      setHabits(freshData);
+      AsyncStorage.setItem("off_habits_data", JSON.stringify(freshData));
     } catch (error) {
-      console.error("Fetch Habits Error:", error);
+      console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -167,8 +173,6 @@ export default function HabitsScreen() {
     try {
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
-
-      // Optimistic visual update could be added here, but API reload is safer for habits
       await axios.put(
         `${BACKEND_URL}/habits/${id}/${action}`,
         {},
@@ -186,13 +190,6 @@ export default function HabitsScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: statusBarHeight }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Habits</Text>
-        <Text style={styles.headerSubtitle}>
-          Forge discipline & break patterns
-        </Text>
-      </View>
-
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, activeTab === "good" && styles.activeTab]}
@@ -252,14 +249,10 @@ export default function HabitsScreen() {
           ) : (
             displayedHabits.map((habit) => {
               const isGood = habit.type === "good";
-
-              // Good Habit Logic
               const today = new Date().setHours(0, 0, 0, 0);
               const isCheckedInToday = (habit.checkIns || []).some(
                 (d: string) => new Date(d).setHours(0, 0, 0, 0) === today,
               );
-
-              // Bad Habit Logic
               const isModeration = habit.strategy === "moderation";
               const allowancesLeft = Math.max(
                 0,
@@ -286,7 +279,6 @@ export default function HabitsScreen() {
                       </Text>
                     </View>
                   </View>
-
                   {isGood ? (
                     <View style={styles.metaRow}>
                       <View style={styles.metaPill}>
@@ -326,7 +318,6 @@ export default function HabitsScreen() {
                     <View>
                       <Text style={styles.timerLabel}>CLEAN SINCE</Text>
                       <LiveTimer startDate={habit.startDate} />
-
                       <View style={styles.badActions}>
                         {isModeration && (
                           <TouchableOpacity
@@ -374,20 +365,7 @@ export default function HabitsScreen() {
 
 const getStyles = (theme: any) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.background },
-    header: { paddingHorizontal: 24, marginBottom: 20 },
-    headerTitle: {
-      fontSize: 32,
-      fontWeight: "800",
-      color: theme.text,
-      letterSpacing: -1,
-    },
-    headerSubtitle: {
-      fontSize: 16,
-      color: theme.subtext,
-      fontWeight: "500",
-      marginTop: 4,
-    },
+    container: { flex: 1, backgroundColor: theme.background, paddingTop: 10 },
     tabContainer: {
       flexDirection: "row",
       backgroundColor: theme.card,
@@ -433,7 +411,6 @@ const getStyles = (theme: any) =>
       marginTop: 20,
       letterSpacing: -0.5,
     },
-
     habitCard: {
       backgroundColor: theme.card,
       borderRadius: 24,
@@ -443,7 +420,6 @@ const getStyles = (theme: any) =>
     },
     goodCard: { borderLeftWidth: 4, borderLeftColor: "#10B981" },
     badCard: { borderLeftWidth: 4, borderLeftColor: "#F43F5E" },
-
     habitHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -463,7 +439,6 @@ const getStyles = (theme: any) =>
       letterSpacing: -0.5,
       flexShrink: 1,
     },
-
     metaRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -478,7 +453,6 @@ const getStyles = (theme: any) =>
       letterSpacing: 1,
     },
     metaValue: { fontSize: 24, fontWeight: "900", color: theme.text },
-
     timerLabel: {
       fontSize: 10,
       fontWeight: "800",
@@ -486,9 +460,7 @@ const getStyles = (theme: any) =>
       letterSpacing: 1,
       marginTop: 4,
     },
-
     badActions: { flexDirection: "row", gap: 10, marginTop: 16 },
-
     actionBtn: {
       flexDirection: "row",
       alignItems: "center",

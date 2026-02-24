@@ -1,22 +1,38 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
+import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Appearance,
+  LogBox,
   Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TouchableOpacity,
   useColorScheme,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+// --- THE FIX: MUTE EXPO GO SDK 53 WARNING ---
+LogBox.ignoreLogs(["expo-notifications: Android Push notifications"]);
+
+// --- TypeScript bypass for Notification Handler ---
+Notifications.setNotificationHandler({
+  handleNotification: async () =>
+    ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }) as any,
+});
 
 // --- Pure Monochrome Theme ---
 const Colors = {
@@ -30,6 +46,8 @@ const Colors = {
     invertedText: "#FFFFFF",
     danger: "#FF3B30",
     dangerBg: "#FFEBEB",
+    success: "#10B981",
+    brand: "#3B82F6",
   },
   dark: {
     background: "#000000",
@@ -41,6 +59,8 @@ const Colors = {
     invertedText: "#000000",
     danger: "#FF453A",
     dangerBg: "#3A0A0A",
+    success: "#10B981",
+    brand: "#3B82F6",
   },
 };
 
@@ -53,7 +73,6 @@ export default function SettingsScreen() {
   const statusBarHeight =
     Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
 
-  // Added isAdmin to the state type
   const [userData, setUserData] = useState<{
     name: string;
     email: string;
@@ -61,17 +80,20 @@ export default function SettingsScreen() {
     isAdmin: boolean;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Preferences State
   const [activeThemeMode, setActiveThemeMode] = useState<
     "light" | "dark" | "system"
   >("system");
+  const [generalNotifs, setGeneralNotifs] = useState(false);
+  const [prayerNotifs, setPrayerNotifs] = useState(false);
 
-  // --- FETCH REAL USER DATA FROM MONGODB ---
+  // --- FETCH REAL USER DATA & PREFERENCES ---
   useEffect(() => {
     const fetchUser = async () => {
       try {
         const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
         const token = await AsyncStorage.getItem("userToken");
-
         if (!token || !BACKEND_URL) return;
 
         const res = await axios.get(`${BACKEND_URL}/auth/user`, {
@@ -80,12 +102,8 @@ export default function SettingsScreen() {
 
         const name = res.data.name || "Unknown User";
         const email = res.data.email || "No email linked";
-
-        // Check if the user is the Super Admin
         const isAdmin =
           res.data.isAdmin || email.toLowerCase() === "ranasuffyan9@gmail.com";
-
-        // Create initials (e.g., "Abu Sufian" -> "AS")
         const initials =
           name
             .match(/(\b\S)?/g)
@@ -104,36 +122,100 @@ export default function SettingsScreen() {
 
     fetchUser();
 
-    // Load saved theme preference
-    AsyncStorage.getItem("themePref").then((savedTheme) => {
-      if (
-        savedTheme === "light" ||
-        savedTheme === "dark" ||
-        savedTheme === "system"
-      ) {
-        setActiveThemeMode(savedTheme);
-      }
-    });
+    // Load saved preferences
+    AsyncStorage.multiGet(["themePref", "generalNotifs", "prayerNotifs"]).then(
+      (values) => {
+        const savedTheme = values[0][1];
+        const savedGeneral = values[1][1];
+        const savedPrayer = values[2][1];
+
+        if (
+          savedTheme === "light" ||
+          savedTheme === "dark" ||
+          savedTheme === "system"
+        )
+          setActiveThemeMode(savedTheme);
+        if (savedGeneral === "true") setGeneralNotifs(true);
+        if (savedPrayer === "true") setPrayerNotifs(true);
+      },
+    );
   }, []);
 
   // --- THEME SWITCHER LOGIC ---
   const handleThemeChange = async (mode: "light" | "dark" | "system") => {
     setActiveThemeMode(mode);
     await AsyncStorage.setItem("themePref", mode);
-
-    // The Appearance API physically overrides the device's theme setting inside the app
     if (mode === "system") {
-      Appearance.setColorScheme(null); // Resets to follow iOS/Android system settings
+      Appearance.setColorScheme(null);
     } else {
-      Appearance.setColorScheme(mode); // Forces pure light or pure dark mode
+      Appearance.setColorScheme(mode);
     }
   };
 
-  // --- LOGOUT LOGIC ---
+  // --- NOTIFICATION PERMISSION HANDLER ---
+  const requestNotificationPermission = async () => {
+    try {
+      const { status: existingStatus } =
+        await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== "granted") {
+        Alert.alert(
+          "Permission Denied",
+          "Please enable notifications in your phone settings.",
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      Alert.alert(
+        "Simulator Notice",
+        "Push Notifications require a built APK/App to test fully.",
+      );
+      return false;
+    }
+  };
+
+  const toggleGeneralNotifs = async (value: boolean) => {
+    if (value) {
+      const granted = await requestNotificationPermission();
+      if (!granted) {
+        setGeneralNotifs(false);
+        return;
+      }
+      Alert.alert(
+        "General Alerts Enabled",
+        "You will now be notified 5 mins before classes and 15 mins before tasks.",
+      );
+    }
+    setGeneralNotifs(value);
+    await AsyncStorage.setItem("generalNotifs", value ? "true" : "false");
+  };
+
+  const togglePrayerNotifs = async (value: boolean) => {
+    if (value) {
+      const granted = await requestNotificationPermission();
+      if (!granted) {
+        setPrayerNotifs(false);
+        return;
+      }
+      Alert.alert(
+        "Prayer Alerts Enabled",
+        "You will now receive reminders for all 5 daily prayers.",
+      );
+    }
+    setPrayerNotifs(value);
+    await AsyncStorage.setItem("prayerNotifs", value ? "true" : "false");
+  };
+
+  // --- BULLETPROOF LOGOUT ---
   const handleLogout = () => {
     Alert.alert(
       "Sign Out",
-      "Are you sure you want to sign out of your portal?",
+      "Are you sure you want to securely sign out of your portal?",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -141,7 +223,16 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             await AsyncStorage.removeItem("userToken");
-            router.replace("/");
+
+            const keys = await AsyncStorage.getAllKeys();
+            const cacheKeys = keys.filter((k) => k.startsWith("off_"));
+            await AsyncStorage.multiRemove(cacheKeys);
+
+            if (router.canDismiss()) {
+              router.dismissAll();
+            }
+
+            router.replace("/login");
           },
         },
       ],
@@ -163,7 +254,6 @@ export default function SettingsScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* --- PROFILE CARD --- */}
           <View style={styles.profileCard}>
             <View style={styles.avatarCircle}>
               <Text style={styles.avatarText}>{userData?.initials}</Text>
@@ -172,8 +262,6 @@ export default function SettingsScreen() {
               <Text style={styles.profileName}>{userData?.name}</Text>
               <Text style={styles.profileEmail}>{userData?.email}</Text>
             </View>
-
-            {/* DYNAMIC ROLE BADGE */}
             <View
               style={[styles.proBadge, userData?.isAdmin && styles.adminBadge]}
             >
@@ -190,7 +278,6 @@ export default function SettingsScreen() {
 
           <Text style={styles.sectionHeading}>PREFERENCES</Text>
 
-          {/* --- THEME SELECTOR BENTO --- */}
           <View style={styles.settingBlock}>
             <View style={styles.settingHeader}>
               <Ionicons
@@ -200,7 +287,6 @@ export default function SettingsScreen() {
               />
               <Text style={styles.settingTitle}>App Theme</Text>
             </View>
-
             <View style={styles.themeSelector}>
               {(["system", "light", "dark"] as const).map((mode) => {
                 const isActive = activeThemeMode === mode;
@@ -236,44 +322,79 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {/* Additional Settings Placeholder */}
           <View style={styles.settingBlock}>
-            <TouchableOpacity style={styles.settingRow}>
-              <View style={styles.settingRowLeft}>
-                <Ionicons
-                  name="notifications-outline"
-                  size={20}
-                  color={theme.text}
-                />
-                <Text style={styles.settingTitle}>Push Notifications</Text>
-              </View>
+            <View style={styles.settingHeader}>
               <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.subtext}
+                name="notifications-outline"
+                size={20}
+                color={theme.text}
               />
-            </TouchableOpacity>
+              <Text style={styles.settingTitle}>Push Notifications</Text>
+            </View>
+
+            <View style={styles.settingRow}>
+              <View style={styles.settingRowLeft}>
+                <View
+                  style={[
+                    styles.iconBg,
+                    { backgroundColor: "rgba(59, 130, 246, 0.1)" },
+                  ]}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={18}
+                    color={theme.brand}
+                  />
+                </View>
+                <View>
+                  <Text style={styles.settingRowTitle}>General Alerts</Text>
+                  <Text style={styles.settingRowSub}>
+                    Classes (5m) & Tasks (15m)
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={generalNotifs}
+                onValueChange={toggleGeneralNotifs}
+                trackColor={{ false: theme.border, true: theme.brand }}
+                ios_backgroundColor={theme.border}
+              />
+            </View>
+
             <View style={styles.divider} />
-            <TouchableOpacity style={styles.settingRow}>
+
+            <View style={styles.settingRow}>
               <View style={styles.settingRowLeft}>
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={20}
-                  color={theme.text}
-                />
-                <Text style={styles.settingTitle}>Security & PIN</Text>
+                <View
+                  style={[
+                    styles.iconBg,
+                    { backgroundColor: "rgba(16, 185, 129, 0.1)" },
+                  ]}
+                >
+                  <Ionicons
+                    name="moon-outline"
+                    size={18}
+                    color={theme.success}
+                  />
+                </View>
+                <View>
+                  <Text style={styles.settingRowTitle}>Prayer Alerts</Text>
+                  <Text style={styles.settingRowSub}>
+                    5 Daily Namaz Reminders
+                  </Text>
+                </View>
               </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.subtext}
+              <Switch
+                value={prayerNotifs}
+                onValueChange={togglePrayerNotifs}
+                trackColor={{ false: theme.border, true: theme.success }}
+                ios_backgroundColor={theme.border}
               />
-            </TouchableOpacity>
+            </View>
           </View>
 
           <Text style={styles.sectionHeading}>ACCOUNT</Text>
 
-          {/* --- LOG OUT BUTTON --- */}
           <TouchableOpacity
             style={styles.logoutButton}
             activeOpacity={0.7}
@@ -283,7 +404,6 @@ export default function SettingsScreen() {
             <Text style={styles.logoutText}>Sign Out</Text>
           </TouchableOpacity>
 
-          {/* App Version Stamp */}
           <Text style={styles.versionText}>MyPortal v2.0.0 (Beta)</Text>
         </ScrollView>
       )}
@@ -293,7 +413,7 @@ export default function SettingsScreen() {
 
 const getStyles = (theme: any) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.background },
+    container: { flex: 1, backgroundColor: theme.background, paddingTop: 10 },
     header: { paddingHorizontal: 24, marginBottom: 20 },
     headerTitle: {
       fontSize: 32,
@@ -301,7 +421,6 @@ const getStyles = (theme: any) =>
       color: theme.text,
       letterSpacing: -1,
     },
-
     loadingContainer: {
       flex: 1,
       justifyContent: "center",
@@ -309,7 +428,6 @@ const getStyles = (theme: any) =>
     },
     scrollContent: { paddingHorizontal: 24, paddingBottom: 100 },
 
-    // Profile Card
     profileCard: {
       backgroundColor: theme.card,
       borderRadius: 24,
@@ -345,7 +463,6 @@ const getStyles = (theme: any) =>
     },
     profileEmail: { fontSize: 13, color: theme.subtext, fontWeight: "500" },
 
-    // Badges
     proBadge: {
       backgroundColor: theme.background,
       paddingHorizontal: 10,
@@ -375,10 +492,9 @@ const getStyles = (theme: any) =>
       marginLeft: 5,
     },
 
-    // Setting Blocks
     settingBlock: {
       backgroundColor: theme.card,
-      borderRadius: 20,
+      borderRadius: 24,
       borderWidth: 1,
       borderColor: theme.border,
       marginBottom: 25,
@@ -388,19 +504,18 @@ const getStyles = (theme: any) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
-      padding: 14,
+      padding: 16,
       paddingBottom: 10,
     },
-    settingTitle: { fontSize: 16, fontWeight: "700", color: theme.text },
+    settingTitle: { fontSize: 16, fontWeight: "800", color: theme.text },
 
-    // Theme Selector (Segmented Pill)
     themeSelector: {
       flexDirection: "row",
       backgroundColor: theme.background,
       borderRadius: 14,
       padding: 4,
-      marginHorizontal: 8,
-      marginBottom: 8,
+      marginHorizontal: 10,
+      marginBottom: 10,
       borderWidth: 1,
       borderColor: theme.border,
     },
@@ -424,18 +539,30 @@ const getStyles = (theme: any) =>
     themeBtnText: { fontSize: 13, fontWeight: "700", color: theme.subtext },
     activeThemeBtnText: { color: theme.invertedText },
 
-    // List Rows
     settingRow: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
-      paddingVertical: 16,
-      paddingHorizontal: 14,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
     },
-    settingRowLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-    divider: { height: 1, backgroundColor: theme.border, marginHorizontal: 14 },
+    settingRowLeft: { flexDirection: "row", alignItems: "center", gap: 14 },
+    iconBg: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    settingRowTitle: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: theme.text,
+      marginBottom: 2,
+    },
+    settingRowSub: { fontSize: 12, color: theme.subtext, fontWeight: "500" },
+    divider: { height: 1, backgroundColor: theme.border, marginHorizontal: 16 },
 
-    // Logout Button
     logoutButton: {
       flexDirection: "row",
       alignItems: "center",

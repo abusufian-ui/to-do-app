@@ -1,21 +1,29 @@
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
+import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
+  LayoutAnimation,
   Platform,
+  RefreshControl,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
+  UIManager,
   useColorScheme,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-// IMPORT YOUR BRAND NEW UCP LOGO
 import UCPLogo from "../../components/UCPLogo";
 
-// --- Pure Monochrome Theme ---
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 const Colors = {
   light: {
     background: "#FFFFFF",
@@ -39,245 +47,431 @@ const Colors = {
   },
 };
 
-// --- Mock Data: Full Daily Schedule ---
-const stats = { cgpa: "3.64", credits: "84" };
-const nextClass = {
-  name: "Differential Equations",
-  time: "10:00 AM",
-  room: "R-105",
-  startsIn: "45 mins",
+const parseTimeStringToDate = (timeStr: string) => {
+  if (!timeStr) return new Date();
+  try {
+    const [time, modifier] = timeStr.split(" ");
+    let [hours, minutes] = time.split(":").map(Number);
+    if (modifier === "PM" && hours < 12) hours += 12;
+    if (modifier === "AM" && hours === 12) hours = 0;
+    const d = new Date();
+    d.setHours(hours, minutes, 0, 0);
+    return d;
+  } catch (e) {
+    return new Date();
+  }
 };
-
-const todaysClasses = [
-  {
-    id: "1",
-    name: "Operating Systems",
-    type: "Lab",
-    time: "08:30 AM",
-    endTime: "09:50 AM",
-    room: "L-402",
-  },
-  {
-    id: "2",
-    name: "Differential Equations",
-    type: "Lecture",
-    time: "10:00 AM",
-    endTime: "11:20 AM",
-    room: "R-105",
-  },
-  {
-    id: "3",
-    name: "Software Engineering",
-    type: "Lecture",
-    time: "11:30 AM",
-    endTime: "12:50 PM",
-    room: "R-201",
-  },
-  {
-    id: "4",
-    name: "Game Dev (Unity)",
-    type: "Lab",
-    time: "01:00 PM",
-    endTime: "02:20 PM",
-    room: "L-304",
-  },
-  {
-    id: "5",
-    name: "DAA",
-    type: "Lecture",
-    time: "02:30 PM",
-    endTime: "03:50 PM",
-    room: "R-110",
-  },
-];
-
-const todaysTasks = [
-  {
-    id: "1",
-    text: "Initialize The Zeta AI repository",
-    course: "FYP",
-    done: true,
-  },
-  {
-    id: "2",
-    text: "Deploy web portal frontend to Vercel",
-    course: "Web Dev",
-    done: false,
-  },
-  {
-    id: "3",
-    text: "Complete OS Lab Report",
-    course: "Operating Systems",
-    done: false,
-  },
-];
 
 export default function HomeScreen() {
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
 
-  const insets = useSafeAreaInsets();
-
-  // THE FIX: Directly grab Android's native hardware status bar height.
-  // If on iOS, it falls back to the safe area insets.
-  const statusBarHeight =
-    Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
-
-  const today = new Date()
+  const todayDateStr = new Date()
     .toLocaleDateString("en-US", {
       weekday: "long",
       month: "short",
       day: "numeric",
     })
     .toUpperCase();
+  const currentDayName = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+  });
+
+  const [userName, setUserName] = useState("Student");
+  const [stats, setStats] = useState({ cgpa: "0.00", credits: "0" });
+  const [todaysClasses, setTodaysClasses] = useState<any[]>([]);
+  const [nextClass, setNextClass] = useState<any | null>(null);
+  const [tasks, setTasks] = useState<any[]>([]);
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [completingId, setCompletingId] = useState<string | null>(null);
+
+  const processTimetable = (allClasses: any[]) => {
+    const todayList = allClasses
+      .filter(
+        (c: any) =>
+          c.day && c.day.toLowerCase() === currentDayName.toLowerCase(),
+      )
+      .sort(
+        (a: any, b: any) =>
+          parseTimeStringToDate(a.startTime).getTime() -
+          parseTimeStringToDate(b.startTime).getTime(),
+      );
+
+    setTodaysClasses(todayList);
+    const now = new Date();
+    const upcoming = todayList.find(
+      (c: any) => parseTimeStringToDate(c.startTime) > now,
+    );
+
+    if (upcoming) {
+      const diffMs =
+        parseTimeStringToDate(upcoming.startTime).getTime() - now.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const hrs = Math.floor(diffMins / 60);
+      const mins = diffMins % 60;
+      let startsIn = hrs > 0 ? `${hrs} hr ${mins} min` : `${mins} mins`;
+      setNextClass({ ...upcoming, startsIn });
+    } else {
+      setNextClass(null);
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    try {
+      // --- 1. INSTANT OFFLINE LOAD ---
+      const [cUser, cStats, cTime, cTasks] = await Promise.all([
+        AsyncStorage.getItem("off_dash_user"),
+        AsyncStorage.getItem("off_dash_stats"),
+        AsyncStorage.getItem("off_dash_time"),
+        AsyncStorage.getItem("off_dash_tasks"),
+      ]);
+
+      if (cUser) setUserName(JSON.parse(cUser));
+      if (cStats) setStats(JSON.parse(cStats));
+      if (cTime) processTimetable(JSON.parse(cTime));
+      if (cTasks) setTasks(JSON.parse(cTasks));
+
+      if (cUser || cTime || cTasks) setIsLoading(false); // Drop loading screen instantly if we have cache
+
+      // --- 2. FETCH FRESH SERVER DATA ---
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      const token = await AsyncStorage.getItem("userToken");
+      if (!BACKEND_URL || !token) return setIsLoading(false);
+
+      const config = { headers: { "x-auth-token": token } };
+      const results = await Promise.allSettled([
+        axios.get(`${BACKEND_URL}/auth/user`, config),
+        axios.get(`${BACKEND_URL}/student-stats`, config),
+        axios.get(`${BACKEND_URL}/timetable`, config),
+        axios.get(`${BACKEND_URL}/tasks`, config),
+      ]);
+
+      // --- 3. UPDATE UI & SAVE TO CACHE ---
+      if (results[0].status === "fulfilled" && results[0].value.data.name) {
+        setUserName(results[0].value.data.name);
+        AsyncStorage.setItem(
+          "off_dash_user",
+          JSON.stringify(results[0].value.data.name),
+        );
+      }
+      if (results[1].status === "fulfilled" && !results[1].value.data.message) {
+        const freshStats = {
+          cgpa: results[1].value.data.cgpa || "0.00",
+          credits: results[1].value.data.credits || "0",
+        };
+        setStats(freshStats);
+        AsyncStorage.setItem("off_dash_stats", JSON.stringify(freshStats));
+      }
+      if (results[2].status === "fulfilled") {
+        processTimetable(results[2].value.data || []);
+        AsyncStorage.setItem(
+          "off_dash_time",
+          JSON.stringify(results[2].value.data || []),
+        );
+      }
+      if (results[3].status === "fulfilled") {
+        const freshTasks = Array.isArray(results[3].value.data)
+          ? results[3].value.data
+          : [];
+        setTasks(freshTasks);
+        AsyncStorage.setItem("off_dash_tasks", JSON.stringify(freshTasks));
+      }
+    } catch (error) {
+      console.log("Offline mode active.");
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+    const interval = setInterval(fetchDashboardData, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchDashboardData();
+  };
+
+  const activeTasks = tasks
+    .filter((t) => !t.completed)
+    .sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+  const completedTodayTasks = tasks.filter(
+    (t) =>
+      t.completed &&
+      new Date(t.updatedAt || t.createdAt).toDateString() ===
+        new Date().toDateString(),
+  );
+  const actionItems = activeTasks.slice(0, 4);
+  const totalTasksScope = activeTasks.length + completedTodayTasks.length;
+
+  const toggleTaskCompletion = async (taskId: string) => {
+    setCompletingId(taskId);
+    setTimeout(async () => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      const newTasks = tasks.map((t) =>
+        t._id === taskId
+          ? {
+              ...t,
+              completed: true,
+              status: "Completed",
+              updatedAt: new Date().toISOString(),
+            }
+          : t,
+      );
+      setTasks(newTasks);
+      setCompletingId(null);
+      // Cache optimistic update instantly
+      AsyncStorage.setItem("off_dash_tasks", JSON.stringify(newTasks));
+
+      try {
+        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+        const token = await AsyncStorage.getItem("userToken");
+        await axios.put(
+          `${BACKEND_URL}/tasks/${taskId}`,
+          { completed: true, status: "Completed" },
+          { headers: { "x-auth-token": token } },
+        );
+      } catch (error) {
+        fetchDashboardData();
+      }
+    }, 400);
+  };
 
   return (
-    // Apply the foolproof statusBarHeight to the wrapper View
-    <View style={[styles.safeArea, { paddingTop: statusBarHeight }]}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* --- HEADER --- */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.dateText}>{today}</Text>
-            <Text style={styles.greeting}>Abu Sufian</Text>
-            <Text style={styles.subtitle}>BSCS Command Center</Text>
-          </View>
-          <TouchableOpacity style={styles.profileAvatar}>
-            <Text style={styles.avatarText}>AS</Text>
-          </TouchableOpacity>
+    <View style={styles.safeArea}>
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.text} />
         </View>
-
-        {/* --- BENTO GRID ARCHITECTURE --- */}
-        <View style={styles.bentoContainer}>
-          <View style={[styles.bentoBox, styles.heroBox]}>
-            <View style={styles.heroHeader}>
-              <View style={styles.liveBadge}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveText}>UP NEXT</Text>
-              </View>
-              <Ionicons
-                name="notifications-outline"
-                size={20}
-                color={theme.invertedText}
-              />
-            </View>
-            <Text style={styles.heroTitle}>{nextClass.name}</Text>
-            <Text style={styles.heroSub}>
-              Starts in {nextClass.startsIn} • Room {nextClass.room}
-            </Text>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.text}
+            />
+          }
+        >
+          <View style={styles.dashboardInfo}>
+            <Text style={styles.dateText}>{todayDateStr}</Text>
+            <Text style={styles.greeting}>Hey, {userName}</Text>
           </View>
 
-          <View style={styles.subGrid}>
-            <View style={[styles.bentoBox, styles.halfBox]}>
-              <Ionicons
-                name="school-outline"
-                size={24}
-                color={theme.text}
-                style={styles.bentoIcon}
-              />
-              <Text style={styles.bentoValue}>{stats.cgpa}</Text>
-              <Text style={styles.bentoLabel}>Current CGPA</Text>
-            </View>
-            <View style={[styles.bentoBox, styles.halfBox]}>
-              <Ionicons
-                name="checkbox-outline"
-                size={24}
-                color={theme.text}
-                style={styles.bentoIcon}
-              />
-              <Text style={styles.bentoValue}>1 / 3</Text>
-              <Text style={styles.bentoLabel}>Tasks Done</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* --- FULL DAILY SCHEDULE (VERTICAL TIMELINE) --- */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Today's Schedule</Text>
-        </View>
-
-        <View style={styles.timelineContainer}>
-          {todaysClasses.map((cls, index) => (
-            <View key={cls.id} style={styles.timelineRow}>
-              {/* Left Side: Time & Line */}
-              <View style={styles.timelineLeft}>
-                <Text style={styles.timelineTime}>{cls.time}</Text>
-                {/* Don't show the connecting line after the last class */}
-                {index !== todaysClasses.length - 1 && (
-                  <View style={styles.timelineLine} />
-                )}
-                <View style={styles.timelineDot} />
-              </View>
-
-              {/* Right Side: Class Details Card */}
-              <View style={styles.timelineCard}>
-                {/* The UCP Logo & Subject Name Row */}
-                <View style={styles.courseHeaderRow}>
-                  <UCPLogo
-                    width={18}
-                    height={18}
-                    color={theme.text}
-                    style={styles.ucpIcon}
-                  />
-                  <Text style={styles.className} numberOfLines={1}>
-                    {cls.name}
-                  </Text>
-                </View>
-
-                <View style={styles.classFooter}>
-                  <Text style={styles.classDuration}>
-                    {cls.time} - {cls.endTime}
-                  </Text>
-                  <View style={styles.roomBadge}>
-                    <Text style={styles.roomText}>{cls.room}</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          ))}
-        </View>
-
-        {/* --- ACTION ITEMS LIST --- */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Action Items</Text>
-          <TouchableOpacity>
-            <Text style={styles.linkText}>View All</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.taskList}>
-          {todaysTasks.map((task, index) => (
-            <TouchableOpacity
-              key={task.id}
+          <View style={styles.bentoContainer}>
+            <View
               style={[
-                styles.taskRow,
-                index === todaysTasks.length - 1 && { borderBottomWidth: 0 },
+                styles.bentoBox,
+                styles.heroBox,
+                !nextClass && {
+                  backgroundColor: theme.card,
+                  borderColor: theme.border,
+                },
               ]}
             >
-              <View style={[styles.checkbox, task.done && styles.checkboxDone]}>
-                {task.done && (
-                  <Ionicons
-                    name="checkmark"
-                    size={14}
-                    color={theme.invertedText}
-                  />
-                )}
-              </View>
-              <View style={styles.taskInfo}>
-                <Text
-                  style={[styles.taskText, task.done && styles.taskTextDone]}
+              <View style={styles.heroHeader}>
+                <View
+                  style={[
+                    styles.liveBadge,
+                    !nextClass && {
+                      backgroundColor: "transparent",
+                      paddingHorizontal: 0,
+                    },
+                  ]}
                 >
-                  {task.text}
-                </Text>
-                <Text style={styles.taskCourse}>{task.course}</Text>
+                  {nextClass && <View style={styles.liveDot} />}
+                  <Text
+                    style={[
+                      styles.liveText,
+                      !nextClass && { color: theme.subtext },
+                    ]}
+                  >
+                    {nextClass ? "UP NEXT" : "STATUS"}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={nextClass ? "notifications" : "cafe"}
+                  size={20}
+                  color={nextClass ? theme.invertedText : theme.subtext}
+                />
               </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
+              <Text
+                style={[styles.heroTitle, !nextClass && { color: theme.text }]}
+              >
+                {nextClass
+                  ? nextClass.courseName || nextClass.name
+                  : "All clear for now."}
+              </Text>
+              <Text
+                style={[styles.heroSub, !nextClass && { color: theme.subtext }]}
+              >
+                {nextClass
+                  ? `Starts in ${nextClass.startsIn} • Room ${nextClass.room || "TBD"}`
+                  : "Enjoy your free time or crush some tasks."}
+              </Text>
+            </View>
+
+            <View style={styles.subGrid}>
+              <View style={[styles.bentoBox, styles.halfBox]}>
+                <Ionicons
+                  name="school-outline"
+                  size={24}
+                  color={theme.text}
+                  style={styles.bentoIcon}
+                />
+                <Text style={styles.bentoValue}>{stats.cgpa}</Text>
+                <Text style={styles.bentoLabel}>Current CGPA</Text>
+              </View>
+              <View style={[styles.bentoBox, styles.halfBox]}>
+                <Ionicons
+                  name="checkbox-outline"
+                  size={24}
+                  color={theme.text}
+                  style={styles.bentoIcon}
+                />
+                <Text style={styles.bentoValue}>
+                  {completedTodayTasks.length}
+                  {totalTasksScope > 0 ? `/${totalTasksScope}` : ""}
+                </Text>
+                <Text style={styles.bentoLabel}>Tasks Done</Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Today's Schedule</Text>
+          </View>
+          <View style={styles.timelineContainer}>
+            {todaysClasses.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Ionicons
+                  name="calendar-clear-outline"
+                  size={32}
+                  color={theme.border}
+                />
+                <Text style={styles.emptyText}>
+                  No classes scheduled for today.
+                </Text>
+              </View>
+            ) : (
+              todaysClasses.map((cls, index) => (
+                <View key={cls._id || index} style={styles.timelineRow}>
+                  <View style={styles.timelineLeft}>
+                    <Text style={styles.timelineTime}>{cls.startTime}</Text>
+                    {index !== todaysClasses.length - 1 && (
+                      <View style={styles.timelineLine} />
+                    )}
+                    <View style={styles.timelineDot} />
+                  </View>
+                  <View style={styles.timelineCard}>
+                    <View style={styles.courseHeaderRow}>
+                      <UCPLogo
+                        width={18}
+                        height={18}
+                        color={theme.text}
+                        style={styles.ucpIcon}
+                      />
+                      <Text style={styles.className} numberOfLines={1}>
+                        {cls.courseName || cls.name}
+                      </Text>
+                    </View>
+                    <View style={styles.classFooter}>
+                      <Text style={styles.classDuration}>
+                        {cls.startTime} - {cls.endTime}
+                      </Text>
+                      <View style={styles.roomBadge}>
+                        <Text style={styles.roomText}>{cls.room || "TBD"}</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Action Items</Text>
+          </View>
+          <View style={styles.taskList}>
+            {actionItems.length === 0 ? (
+              <View style={{ padding: 20, alignItems: "center" }}>
+                <Text style={styles.emptyText}>
+                  No pending tasks. You're awesome!
+                </Text>
+              </View>
+            ) : (
+              actionItems.map((task, index) => {
+                const isCompleting = task._id === completingId;
+                return (
+                  <TouchableOpacity
+                    key={task._id}
+                    activeOpacity={0.7}
+                    onPress={() => toggleTaskCompletion(task._id)}
+                    style={[
+                      styles.taskRow,
+                      index === actionItems.length - 1 && {
+                        borderBottomWidth: 0,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.checkbox,
+                        isCompleting && styles.checkboxDone,
+                      ]}
+                    >
+                      {isCompleting && (
+                        <Ionicons
+                          name="checkmark"
+                          size={16}
+                          color={theme.invertedText}
+                        />
+                      )}
+                    </View>
+                    <View style={styles.taskInfo}>
+                      <Text
+                        style={[
+                          styles.taskText,
+                          isCompleting && styles.taskTextDone,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {task.name}
+                      </Text>
+                      <Text style={styles.taskCourse}>
+                        {task.course || "General"}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.priorityDot,
+                        {
+                          backgroundColor:
+                            task.priority === "Critical"
+                              ? "#EF4444"
+                              : task.priority === "High"
+                                ? "#F59E0B"
+                                : "transparent",
+                        },
+                      ]}
+                    />
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -286,18 +480,16 @@ const getStyles = (theme: any) =>
   StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: theme.background },
     scrollContent: { paddingTop: 20, paddingBottom: 100 },
-
-    header: {
-      flexDirection: "row",
-      justifyContent: "space-between",
+    loadingContainer: {
+      flex: 1,
+      justifyContent: "center",
       alignItems: "center",
-      paddingHorizontal: 24,
-      marginBottom: 30,
     },
+    dashboardInfo: { paddingHorizontal: 24, marginBottom: 25 },
     dateText: {
       color: theme.subtext,
       fontSize: 12,
-      fontWeight: "700",
+      fontWeight: "800",
       letterSpacing: 1.5,
       marginBottom: 6,
     },
@@ -306,19 +498,7 @@ const getStyles = (theme: any) =>
       fontWeight: "800",
       color: theme.text,
       letterSpacing: -1,
-      marginBottom: 4,
     },
-    subtitle: { fontSize: 16, color: theme.subtext, fontWeight: "500" },
-    profileAvatar: {
-      width: 52,
-      height: 52,
-      borderRadius: 18,
-      backgroundColor: theme.invertedBg,
-      justifyContent: "center",
-      alignItems: "center",
-    },
-    avatarText: { color: theme.invertedText, fontSize: 20, fontWeight: "800" },
-
     bentoContainer: { paddingHorizontal: 24, gap: 16, marginBottom: 35 },
     bentoBox: {
       borderRadius: 24,
@@ -367,18 +547,16 @@ const getStyles = (theme: any) =>
       marginBottom: 8,
     },
     heroSub: { fontSize: 15, color: theme.invertedSubtext, fontWeight: "500" },
-
     subGrid: { flexDirection: "row", gap: 16 },
     halfBox: { flex: 1, height: 140, justifyContent: "space-between" },
     bentoIcon: { marginBottom: 10 },
     bentoValue: {
       fontSize: 28,
-      fontWeight: "800",
+      fontWeight: "900",
       color: theme.text,
       letterSpacing: -1,
     },
     bentoLabel: { fontSize: 13, color: theme.subtext, fontWeight: "600" },
-
     sectionHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -392,20 +570,12 @@ const getStyles = (theme: any) =>
       color: theme.text,
       letterSpacing: -0.5,
     },
-    linkText: {
-      fontSize: 14,
-      fontWeight: "700",
-      color: theme.subtext,
-      textDecorationLine: "underline",
-    },
-
-    // --- TIMELINE STYLES ---
     timelineContainer: { paddingHorizontal: 24, paddingBottom: 35 },
     timelineRow: { flexDirection: "row", marginBottom: 16 },
     timelineLeft: { width: 70, alignItems: "center", marginRight: 15 },
     timelineTime: {
       fontSize: 13,
-      fontWeight: "700",
+      fontWeight: "800",
       color: theme.text,
       marginBottom: 8,
     },
@@ -424,17 +594,14 @@ const getStyles = (theme: any) =>
       top: 34,
       bottom: -20,
     },
-
     timelineCard: {
       flex: 1,
       backgroundColor: theme.card,
       borderRadius: 20,
-      padding: 16,
+      padding: 18,
       borderWidth: 1,
       borderColor: theme.border,
     },
-
-    // UCP Icon & Course Name Wrapper
     courseHeaderRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -448,7 +615,6 @@ const getStyles = (theme: any) =>
       letterSpacing: -0.5,
       flex: 1,
     },
-
     classFooter: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -464,7 +630,8 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
     },
     roomText: { color: theme.text, fontSize: 11, fontWeight: "800" },
-
+    emptyContainer: { alignItems: "center", paddingVertical: 20, gap: 10 },
+    emptyText: { color: theme.subtext, fontSize: 14, fontWeight: "600" },
     taskList: {
       marginHorizontal: 24,
       backgroundColor: theme.card,
@@ -497,10 +664,15 @@ const getStyles = (theme: any) =>
     taskInfo: { flex: 1 },
     taskText: {
       fontSize: 16,
-      fontWeight: "600",
+      fontWeight: "700",
       color: theme.text,
       marginBottom: 4,
     },
-    taskTextDone: { color: theme.subtext, textDecorationLine: "line-through" },
-    taskCourse: { fontSize: 13, color: theme.subtext, fontWeight: "500" },
+    taskTextDone: {
+      textDecorationLine: "line-through",
+      color: theme.subtext,
+      fontStyle: "italic",
+    },
+    taskCourse: { fontSize: 13, color: theme.subtext, fontWeight: "600" },
+    priorityDot: { width: 8, height: 8, borderRadius: 4 },
   });

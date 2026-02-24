@@ -51,16 +51,24 @@ export default function CashScreen() {
 
   const fetchData = async () => {
     try {
+      const cTrans = await AsyncStorage.getItem("off_cash_trans");
+      if (cTrans) {
+        setTransactions(JSON.parse(cTrans));
+        setIsLoading(false);
+      }
+
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
-      if (!BACKEND_URL || !token) return;
+      if (!BACKEND_URL || !token) return setIsLoading(false);
 
       const res = await axios.get(`${BACKEND_URL}/transactions`, {
         headers: { "x-auth-token": token },
       });
-      setTransactions(Array.isArray(res.data) ? res.data : []);
+      const freshData = Array.isArray(res.data) ? res.data : [];
+      setTransactions(freshData);
+      AsyncStorage.setItem("off_cash_trans", JSON.stringify(freshData));
     } catch (error) {
-      console.error("Fetch Transactions Error:", error);
+      console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -71,7 +79,6 @@ export default function CashScreen() {
     fetchData();
   }, []);
 
-  // --- CALCULATIONS ---
   const totalIncome = useMemo(
     () =>
       transactions
@@ -90,11 +97,6 @@ export default function CashScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: statusBarHeight }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Cash Manager</Text>
-        <Text style={styles.headerSubtitle}>Track your cash flow</Text>
-      </View>
-
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.text} />
@@ -114,7 +116,6 @@ export default function CashScreen() {
             />
           }
         >
-          {/* OVERVIEW BENTO BOXES */}
           <View style={styles.bentoGrid}>
             <View
               style={[
@@ -161,9 +162,7 @@ export default function CashScreen() {
               </View>
             </View>
           </View>
-
           <Text style={styles.sectionHeading}>RECENT TRANSACTIONS</Text>
-
           <View style={styles.transactionsContainer}>
             {transactions.length === 0 ? (
               <Text style={styles.emptyText}>No recent transactions.</Text>
@@ -219,19 +218,6 @@ export default function CashScreen() {
 const getStyles = (theme: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background },
-    header: { paddingHorizontal: 24, marginBottom: 20 },
-    headerTitle: {
-      fontSize: 32,
-      fontWeight: "800",
-      color: theme.text,
-      letterSpacing: -1,
-    },
-    headerSubtitle: {
-      fontSize: 16,
-      color: theme.subtext,
-      fontWeight: "500",
-      marginTop: 4,
-    },
     scrollContent: { paddingHorizontal: 24, paddingBottom: 100 },
     loadingContainer: {
       flex: 1,
@@ -245,7 +231,6 @@ const getStyles = (theme: any) =>
       paddingVertical: 20,
       fontStyle: "italic",
     },
-
     bentoGrid: { gap: 12, marginBottom: 30 },
     bentoBox: {
       padding: 20,
@@ -256,7 +241,6 @@ const getStyles = (theme: any) =>
     bentoFull: { alignItems: "center", paddingVertical: 30 },
     bentoRow: { flexDirection: "row", gap: 12 },
     bentoHalf: { flex: 1, backgroundColor: theme.card },
-
     bentoLabel: {
       fontSize: 11,
       fontWeight: "800",
@@ -275,7 +259,6 @@ const getStyles = (theme: any) =>
       letterSpacing: -0.5,
       marginTop: 4,
     },
-
     sectionHeading: {
       fontSize: 12,
       fontWeight: "800",
@@ -284,7 +267,6 @@ const getStyles = (theme: any) =>
       marginBottom: 12,
       marginLeft: 5,
     },
-
     transactionsContainer: {
       backgroundColor: theme.card,
       borderRadius: 24,

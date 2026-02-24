@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -44,16 +45,8 @@ export default function TabLayout() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // --- HAMBURGER MENU BUTTON FOR TOP HEADER ---
-  const MenuHamburger = () => (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      onPress={() => setMenuVisible(true)}
-      style={{ paddingHorizontal: 20 }}
-    >
-      <Ionicons name="menu" size={28} color={theme.text} />
-    </TouchableOpacity>
-  );
+  const safeTop =
+    Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
 
   const navigateFromMenu = (path: any) => {
     setMenuVisible(false);
@@ -61,17 +54,45 @@ export default function TabLayout() {
   };
 
   return (
-    <>
+    <View style={{ flex: 1, backgroundColor: theme.background }}>
       <Tabs
-        screenOptions={{
+        screenOptions={({ route }) => ({
           headerShown: true,
-          headerLeft: () => <MenuHamburger />,
-          headerShadowVisible: false,
-          headerStyle: { backgroundColor: theme.background },
-          headerTitleStyle: {
-            color: theme.text,
-            fontWeight: "800",
-            fontSize: 18,
+          header: ({ options }) => {
+            const title = String(
+              options.headerTitle || options.title || route.name,
+            );
+
+            return (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  backgroundColor: theme.background,
+                  paddingTop: (safeTop || 0) + 15,
+                  paddingHorizontal: 24,
+                  paddingBottom: 10,
+                }}
+              >
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => setMenuVisible(true)}
+                  style={{ marginRight: 16 }}
+                >
+                  <Ionicons name="menu" size={32} color={theme.text} />
+                </TouchableOpacity>
+                <Text
+                  style={{
+                    fontSize: 24,
+                    fontWeight: "800",
+                    color: theme.text,
+                    letterSpacing: -0.5,
+                  }}
+                >
+                  {title}
+                </Text>
+              </View>
+            );
           },
           tabBarStyle: {
             backgroundColor: theme.background,
@@ -83,68 +104,62 @@ export default function TabLayout() {
           tabBarActiveTintColor: theme.invertedBg,
           tabBarInactiveTintColor: theme.subtext,
           tabBarShowLabel: true,
-        }}
+        })}
       >
-        {/* --- 1. DASHBOARD --- */}
         <Tabs.Screen
           name="index"
           options={{
             title: "Dashboard",
             tabBarIcon: ({ color }) => (
-              <Ionicons name="grid" size={24} color={color} />
+              <Ionicons name="grid" size={22} color={color} />
             ),
           }}
         />
 
-        {/* --- 2. CLASSES --- */}
+        {/* UPDATED TO ACADEMICS */}
         <Tabs.Screen
           name="classes"
           options={{
-            title: "Classes",
+            title: "Academics",
             tabBarIcon: ({ color }) => (
-              <Ionicons name="calendar" size={24} color={color} />
+              <Ionicons name="school" size={22} color={color} />
             ),
           }}
         />
 
-        {/* --- 3. THE FLOATING ADD BUTTON (DEAD CENTER) --- */}
         <Tabs.Screen
           name="add"
           options={{
             title: "",
-            headerTitle: "Add New", // Shows title at the top of the screen
-            tabBarLabel: () => null, // Hides the text label underneath the icon
+            headerTitle: "Quick Add",
+            tabBarLabel: () => null,
             tabBarIcon: () => (
               <View style={[styles.fab, { backgroundColor: theme.invertedBg }]}>
-                <Ionicons name="add" size={32} color={theme.invertedText} />
+                <Ionicons name="add" size={30} color={theme.invertedText} />
               </View>
             ),
           }}
         />
 
-        {/* --- 4. TASKS --- */}
         <Tabs.Screen
           name="tasks"
           options={{
             title: "Tasks",
             tabBarIcon: ({ color }) => (
-              <Ionicons name="list" size={24} color={color} />
+              <Ionicons name="list" size={22} color={color} />
             ),
           }}
         />
-
-        {/* --- 5. SETTINGS --- */}
         <Tabs.Screen
           name="settings"
           options={{
             title: "Settings",
             tabBarIcon: ({ color }) => (
-              <Ionicons name="settings" size={24} color={color} />
+              <Ionicons name="settings" size={22} color={color} />
             ),
           }}
         />
 
-        {/* --- HIDDEN ROUTES (Accessible via Side Menu) --- */}
         <Tabs.Screen
           name="habits"
           options={{ href: null, title: "Habit Protocol" }}
@@ -155,7 +170,6 @@ export default function TabLayout() {
         />
       </Tabs>
 
-      {/* --- CUSTOM SLIDE-OUT SIDE MENU --- */}
       <Modal visible={menuVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
@@ -168,7 +182,7 @@ export default function TabLayout() {
               {
                 backgroundColor: theme.card,
                 borderRightColor: theme.border,
-                paddingTop: insets.top + 20,
+                paddingTop: (safeTop || 0) + 20,
               },
             ]}
           >
@@ -192,27 +206,30 @@ export default function TabLayout() {
                 style={styles.menuItem}
                 onPress={() => navigateFromMenu("/")}
               >
-                <Ionicons name="grid-outline" size={24} color={theme.text} />
+                <Ionicons name="grid-outline" size={22} color={theme.text} />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
                   Dashboard
                 </Text>
               </TouchableOpacity>
+
+              {/* UPDATED TO ACADEMICS */}
               <TouchableOpacity
                 style={styles.menuItem}
                 onPress={() => navigateFromMenu("/classes")}
               >
-                <Ionicons name="school-outline" size={24} color={theme.text} />
+                <Ionicons name="school-outline" size={22} color={theme.text} />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
-                  Academics & Classes
+                  Academics
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.menuItem}
                 onPress={() => navigateFromMenu("/tasks")}
               >
-                <Ionicons name="list-outline" size={24} color={theme.text} />
+                <Ionicons name="list-outline" size={22} color={theme.text} />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
-                  Tasks & Priorities
+                  Tasks
                 </Text>
               </TouchableOpacity>
 
@@ -229,10 +246,10 @@ export default function TabLayout() {
                 onPress={() => navigateFromMenu("/habits")}
               >
                 <View style={styles.iconBgPink}>
-                  <Ionicons name="flame" size={20} color="#F43F5E" />
+                  <Ionicons name="flame" size={18} color="#F43F5E" />
                 </View>
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
-                  Habit Protocol
+                  Habits
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -240,10 +257,10 @@ export default function TabLayout() {
                 onPress={() => navigateFromMenu("/cash")}
               >
                 <View style={styles.iconBgGreen}>
-                  <Ionicons name="wallet" size={20} color="#10B981" />
+                  <Ionicons name="wallet" size={18} color="#10B981" />
                 </View>
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
-                  Cash Manager
+                  Cash
                 </Text>
               </TouchableOpacity>
 
@@ -261,7 +278,7 @@ export default function TabLayout() {
               >
                 <Ionicons
                   name="settings-outline"
-                  size={24}
+                  size={22}
                   color={theme.text}
                 />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
@@ -272,79 +289,64 @@ export default function TabLayout() {
           </View>
         </View>
       </Modal>
-    </>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   fab: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     justifyContent: "center",
     alignItems: "center",
-    marginTop: -24, // Elevates the circle outside the bar
+    marginTop: Platform.OS === "ios" ? -15 : -20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 5,
   },
-
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     flexDirection: "row",
   },
-  drawer: {
-    width: width * 0.75,
-    height: "100%",
-    borderRightWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 10, height: 0 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 20,
-  },
-
+  drawer: { width: width * 0.75, height: "100%", borderRightWidth: 1 },
   drawerHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(150,150,150,0.1)",
   },
-  drawerTitle: { fontSize: 24, fontWeight: "900", letterSpacing: -0.5 },
-
-  menuItems: { padding: 24, paddingBottom: 60 },
+  drawerTitle: { fontSize: 22, fontWeight: "900" },
+  menuItems: { padding: 20 },
   menuSectionTitle: {
     fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 1.5,
-    marginBottom: 12,
+    letterSpacing: 1,
+    marginBottom: 10,
   },
   menuItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 16,
-    paddingVertical: 14,
+    gap: 12,
+    paddingVertical: 12,
   },
-  menuItemText: { fontSize: 16, fontWeight: "700" },
-
+  menuItemText: { fontSize: 16, fontWeight: "600" },
   iconBgPink: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: "rgba(244, 63, 94, 0.1)",
     justifyContent: "center",
     alignItems: "center",
   },
   iconBgGreen: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: "rgba(16, 185, 129, 0.1)",
     justifyContent: "center",
     alignItems: "center",

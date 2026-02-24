@@ -18,10 +18,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
 import UCPLogo from "../../components/UCPLogo";
 
-// --- Pure Monochrome Theme ---
 const Colors = {
   light: {
     background: "#FFFFFF",
@@ -45,7 +43,6 @@ const Colors = {
   },
 };
 
-// --- Web-Matched Priority & Status Helpers ---
 const getPriorityConfig = (priority: string) => {
   switch (priority) {
     case "Critical":
@@ -53,25 +50,25 @@ const getPriorityConfig = (priority: string) => {
         color: "#EF4444",
         bg: "rgba(239, 68, 68, 0.15)",
         isDouble: true,
-      }; // Red
+      };
     case "High":
       return {
         color: "#F97316",
         bg: "rgba(249, 115, 22, 0.15)",
         isDouble: false,
-      }; // Orange
+      };
     case "Medium":
       return {
         color: "#EAB308",
         bg: "rgba(234, 179, 8, 0.15)",
         isDouble: false,
-      }; // Yellow
+      };
     case "Low":
       return {
         color: "#3B82F6",
         bg: "rgba(59, 130, 246, 0.15)",
         isDouble: false,
-      }; // Blue
+      };
     default:
       return {
         color: "#737373",
@@ -80,7 +77,6 @@ const getPriorityConfig = (priority: string) => {
       };
   }
 };
-
 const getStatusConfig = (status: string) => {
   switch (status) {
     case "Scheduled":
@@ -96,14 +92,13 @@ const getStatusConfig = (status: string) => {
       return { icon: "ellipse-outline", color: "#737373", label: status };
   }
 };
-
 const formatDate = (dateString: string) => {
   if (!dateString) return "No date";
-  const date = new Date(dateString);
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return new Date(dateString).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
 };
-
-// Helper: Get local YYYY-MM-DD for accurate comparison
 const getLocalYYYYMMDD = (date: Date) => {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -114,14 +109,12 @@ const getLocalYYYYMMDD = (date: Date) => {
 export default function TasksScreen() {
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
-
   const insets = useSafeAreaInsets();
   const statusBarHeight =
     Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
 
   const [activeTab, setActiveTab] = useState<"active" | "completed">("active");
   const [selectedDateFilter, setSelectedDateFilter] = useState("all");
-
   const [tasks, setTasks] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -133,22 +126,16 @@ export default function TasksScreen() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [statusSheetTask, setStatusSheetTask] = useState<any>(null);
 
-  // --- DYNAMIC DATE PILL GENERATOR ---
-  // --- DYNAMIC DATE PILL GENERATOR ---
   const dateFilters = useMemo(() => {
-    // FIX: Explicitly define the TypeScript structure so it accepts both strings and null
     const filters: { id: string; label: string; dateVal: string | null }[] = [
       { id: "all", label: "All Tasks", dateVal: null },
     ];
-
     const today = new Date();
-
     filters.push({
       id: "today",
       label: "Today",
       dateVal: getLocalYYYYMMDD(today),
     });
-
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     filters.push({
@@ -156,43 +143,53 @@ export default function TasksScreen() {
       label: "Tomorrow",
       dateVal: getLocalYYYYMMDD(tomorrow),
     });
-
-    // Generate Days 3 through 7
     for (let i = 2; i <= 6; i++) {
       const futureDate = new Date(today);
       futureDate.setDate(futureDate.getDate() + i);
-      const dayName = futureDate.toLocaleDateString("en-US", {
-        weekday: "short",
-      });
-      const dayNum = futureDate.getDate();
       filters.push({
         id: `day_${i}`,
-        label: `${dayName} ${dayNum}`,
+        label: `${futureDate.toLocaleDateString("en-US", { weekday: "short" })} ${futureDate.getDate()}`,
         dateVal: getLocalYYYYMMDD(futureDate),
       });
     }
-
     filters.push({ id: "later", label: "Later", dateVal: "later" });
     return filters;
   }, []);
 
   const fetchData = async () => {
     try {
+      // --- 1. INSTANT OFFLINE LOAD ---
+      const [cTasks, cCourses] = await Promise.all([
+        AsyncStorage.getItem("off_tasks_data"),
+        AsyncStorage.getItem("off_tasks_courses"),
+      ]);
+      if (cTasks) setTasks(JSON.parse(cTasks));
+      if (cCourses) setCourses(JSON.parse(cCourses));
+      if (cTasks || cCourses) setIsLoading(false);
+
+      // --- 2. FETCH FRESH DATA ---
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-      if (!BACKEND_URL) return;
-
       const token = await AsyncStorage.getItem("userToken");
-      const config = { headers: { "x-auth-token": token } };
+      if (!BACKEND_URL || !token) return setIsLoading(false);
 
+      const config = { headers: { "x-auth-token": token } };
       const [tasksRes, coursesRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/tasks`, config),
         axios.get(`${BACKEND_URL}/courses`, config),
       ]);
 
-      setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
-      setCourses(Array.isArray(coursesRes.data) ? coursesRes.data : []);
+      // --- 3. UPDATE & CACHE ---
+      const freshTasks = Array.isArray(tasksRes.data) ? tasksRes.data : [];
+      const freshCourses = Array.isArray(coursesRes.data)
+        ? coursesRes.data
+        : [];
+
+      setTasks(freshTasks);
+      setCourses(freshCourses);
+      AsyncStorage.setItem("off_tasks_data", JSON.stringify(freshTasks));
+      AsyncStorage.setItem("off_tasks_courses", JSON.stringify(freshCourses));
     } catch (error) {
-      console.error("Fetch Error:", error);
+      console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -207,11 +204,12 @@ export default function TasksScreen() {
     fetchData();
   };
 
-  // --- OPTIMISTIC DATABASE UPDATES ---
   const updateTaskInDB = async (taskId: string, updateData: any) => {
-    setTasks((currentTasks) =>
-      currentTasks.map((t) => (t._id === taskId ? { ...t, ...updateData } : t)),
+    const updated = tasks.map((t) =>
+      t._id === taskId ? { ...t, ...updateData } : t,
     );
+    setTasks(updated);
+    AsyncStorage.setItem("off_tasks_data", JSON.stringify(updated)); // Instantly update cache
     try {
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
@@ -225,11 +223,12 @@ export default function TasksScreen() {
   };
 
   const handleStatusChange = (taskId: string, newStatus: string) => {
-    const isCompleted = newStatus === "Completed";
-    updateTaskInDB(taskId, { status: newStatus, completed: isCompleted });
+    updateTaskInDB(taskId, {
+      status: newStatus,
+      completed: newStatus === "Completed",
+    });
     setStatusSheetTask(null);
   };
-
   const toggleSubtask = (taskId: string, subtaskIndex: number) => {
     const task = tasks.find((t) => t._id === taskId);
     if (!task) return;
@@ -237,11 +236,9 @@ export default function TasksScreen() {
     updatedSubTasks[subtaskIndex].completed =
       !updatedSubTasks[subtaskIndex].completed;
     updateTaskInDB(taskId, { subTasks: updatedSubTasks });
-    if (selectedTask && selectedTask._id === taskId) {
+    if (selectedTask && selectedTask._id === taskId)
       setSelectedTask({ ...selectedTask, subTasks: updatedSubTasks });
-    }
   };
-
   const toggleExpand = (taskId: string) =>
     setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
 
@@ -252,13 +249,11 @@ export default function TasksScreen() {
     if (
       matchedCourse &&
       (matchedCourse.type === "university" || matchedCourse.type === "uni")
-    ) {
+    )
       return <UCPLogo width={16} height={16} color="#3B82F6" />;
-    }
     return <Ionicons name="book" size={16} color={theme.subtext} />;
   };
 
-  // --- FILTER & SORT LOGIC ---
   const activeTasks = tasks
     .filter((t) => !t.completed)
     .sort(
@@ -273,27 +268,20 @@ export default function TasksScreen() {
         new Date(b.updatedAt || b.createdAt).getTime() -
         new Date(a.updatedAt || a.createdAt).getTime(),
     );
-
   let displayedTasks = activeTab === "active" ? activeTasks : completedTasks;
 
-  // Apply Date Pill Filter
   if (selectedDateFilter !== "all") {
     if (selectedDateFilter === "later") {
-      // "Later" catches anything past day 7, OR anything with no date at all
       const day6 = new Date();
       day6.setDate(day6.getDate() + 6);
-      const day6Str = getLocalYYYYMMDD(day6);
       displayedTasks = displayedTasks.filter(
-        (t) => !t.date || t.date > day6Str,
+        (t) => !t.date || t.date > getLocalYYYYMMDD(day6),
       );
     } else if (selectedDateFilter === "today") {
-      // "Today" catches today AND any overdue tasks you missed
-      const todayStr = getLocalYYYYMMDD(new Date());
       displayedTasks = displayedTasks.filter(
-        (t) => t.date && t.date <= todayStr,
+        (t) => t.date && t.date <= getLocalYYYYMMDD(new Date()),
       );
     } else {
-      // Exact day match for tomorrow, wed, thu, etc.
       const selectedDateVal = dateFilters.find(
         (f) => f.id === selectedDateFilter,
       )?.dateVal;
@@ -301,7 +289,6 @@ export default function TasksScreen() {
     }
   }
 
-  // --- RENDER: TASK SLAB ---
   const renderTask = (task: any) => {
     const priority = getPriorityConfig(task.priority);
     const status = getStatusConfig(task.status);
@@ -334,7 +321,6 @@ export default function TasksScreen() {
                 {task.name}
               </Text>
             </View>
-
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => setStatusSheetTask(task)}
@@ -350,7 +336,6 @@ export default function TasksScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-
           <View style={styles.metaContainer}>
             <View style={styles.metaPill}>
               {getCourseIcon(task.course)}
@@ -358,7 +343,6 @@ export default function TasksScreen() {
                 {task.course || "General"}
               </Text>
             </View>
-
             {(task.date || task.time) && (
               <View style={styles.metaPill}>
                 <Ionicons
@@ -371,7 +355,6 @@ export default function TasksScreen() {
                 </Text>
               </View>
             )}
-
             <View
               style={[
                 styles.metaPill,
@@ -414,7 +397,6 @@ export default function TasksScreen() {
                 {task.priority}
               </Text>
             </View>
-
             {subTasksTotal > 0 && (
               <TouchableOpacity
                 activeOpacity={0.6}
@@ -450,7 +432,6 @@ export default function TasksScreen() {
             )}
           </View>
         </TouchableOpacity>
-
         {isExpanded && subTasksTotal > 0 && (
           <View style={styles.subtasksContainer}>
             {task.subTasks.map((sub: any, index: number) => (
@@ -483,11 +464,6 @@ export default function TasksScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: statusBarHeight }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Tasks</Text>
-        <Text style={styles.headerSubtitle}>Manage your priorities</Text>
-      </View>
-
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, activeTab === "active" && styles.activeTab]}
@@ -516,8 +492,6 @@ export default function TasksScreen() {
           </Text>
         </TouchableOpacity>
       </View>
-
-      {/* --- HORIZONTAL DATE PILL FILTER --- */}
       <View>
         <ScrollView
           horizontal
@@ -546,8 +520,6 @@ export default function TasksScreen() {
           })}
         </ScrollView>
       </View>
-
-      {/* Main Content */}
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.text} />
@@ -587,7 +559,6 @@ export default function TasksScreen() {
         </ScrollView>
       )}
 
-      {/* --- STATUS CHANGER BOTTOM SHEET MODAL --- */}
       <Modal visible={!!statusSheetTask} transparent animationType="fade">
         <TouchableWithoutFeedback onPress={() => setStatusSheetTask(null)}>
           <View style={styles.modalOverlay}>
@@ -640,7 +611,6 @@ export default function TasksScreen() {
         </TouchableWithoutFeedback>
       </Modal>
 
-      {/* --- FULL TASK SUMMARY MODAL --- */}
       <Modal visible={!!selectedTask} transparent animationType="slide">
         <View style={styles.fullModalOverlay}>
           <View style={styles.fullModalContent}>
@@ -760,20 +730,6 @@ export default function TasksScreen() {
 const getStyles = (theme: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background },
-    header: { paddingHorizontal: 24, marginBottom: 20 },
-    headerTitle: {
-      fontSize: 32,
-      fontWeight: "800",
-      color: theme.text,
-      letterSpacing: -1,
-    },
-    headerSubtitle: {
-      fontSize: 16,
-      color: theme.subtext,
-      fontWeight: "500",
-      marginTop: 4,
-    },
-
     tabContainer: {
       flexDirection: "row",
       backgroundColor: theme.card,
@@ -800,8 +756,6 @@ const getStyles = (theme: any) =>
     },
     tabText: { fontSize: 14, fontWeight: "700", color: theme.subtext },
     activeTabText: { color: theme.invertedText },
-
-    // --- HORIZONTAL DATE FILTER PILLS ---
     dateFilterContainer: { paddingHorizontal: 24, paddingBottom: 15, gap: 10 },
     datePill: {
       paddingHorizontal: 16,
@@ -818,14 +772,12 @@ const getStyles = (theme: any) =>
     },
     datePillText: { fontSize: 13, fontWeight: "800", color: theme.text },
     activeDatePillText: { color: theme.invertedText },
-
     scrollContent: { paddingHorizontal: 24, paddingBottom: 100, gap: 16 },
     loadingContainer: {
       flex: 1,
       justifyContent: "center",
       alignItems: "center",
     },
-
     emptyContainer: {
       alignItems: "center",
       justifyContent: "center",
@@ -839,8 +791,6 @@ const getStyles = (theme: any) =>
       marginTop: 20,
       letterSpacing: -0.5,
     },
-
-    // --- TASK SLAB ---
     taskCard: {
       backgroundColor: theme.card,
       borderRadius: 20,
@@ -849,7 +799,6 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
     },
     taskCardCompleted: { opacity: 0.6, backgroundColor: theme.background },
-
     taskHeader: {
       flexDirection: "row",
       alignItems: "flex-start",
@@ -868,7 +817,6 @@ const getStyles = (theme: any) =>
       textDecorationLine: "line-through",
       color: theme.subtext,
     },
-
     statusBadge: {
       flexDirection: "row",
       alignItems: "center",
@@ -886,7 +834,6 @@ const getStyles = (theme: any) =>
       textTransform: "uppercase",
       letterSpacing: 0.5,
     },
-
     metaContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
     metaPill: {
       flexDirection: "row",
@@ -900,8 +847,6 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
     },
     metaText: { fontSize: 11, fontWeight: "700", color: theme.subtext },
-
-    // --- EXPANDABLE SUBTASKS ---
     subtasksContainer: {
       marginTop: 16,
       paddingTop: 16,
@@ -921,8 +866,6 @@ const getStyles = (theme: any) =>
       color: theme.subtext,
       fontStyle: "italic",
     },
-
-    // --- STATUS BOTTOM SHEET MODAL ---
     modalOverlay: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.5)",
@@ -950,8 +893,6 @@ const getStyles = (theme: any) =>
       borderBottomColor: theme.border,
     },
     sheetText: { fontSize: 16, color: theme.text, fontWeight: "500" },
-
-    // --- FULL SUMMARY MODAL ---
     fullModalOverlay: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.6)",
@@ -994,7 +935,6 @@ const getStyles = (theme: any) =>
       backgroundColor: theme.background,
       borderRadius: 20,
     },
-
     summaryTitle: {
       fontSize: 24,
       fontWeight: "800",
@@ -1009,7 +949,6 @@ const getStyles = (theme: any) =>
       flex: 1,
       lineHeight: 22,
     },
-
     summaryGrid: {
       flexDirection: "row",
       flexWrap: "wrap",
@@ -1032,7 +971,6 @@ const getStyles = (theme: any) =>
       color: theme.text,
       marginTop: 4,
     },
-
     modalSubtaskBox: {
       backgroundColor: theme.background,
       borderRadius: 16,

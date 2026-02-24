@@ -80,7 +80,7 @@ export default function AddScreen() {
 
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       if (!BACKEND_URL) {
-        Alert.alert("Error", "Backend URL missing in .env file.");
+        Alert.alert("Error", "Backend URL missing.");
         return;
       }
 
@@ -190,19 +190,11 @@ export default function AddScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Quick Add</Text>
-          <Text style={styles.headerSubtitle}>
-            Send data directly to your portal.
-          </Text>
-        </View>
-
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tab, activeForm === "task" && styles.activeTab]}
             onPress={() => setActiveForm("task")}
           >
-            {/* FIXED: Using checkbox-outline instead of the invalid icon name */}
             <Ionicons
               name="checkbox-outline"
               size={20}
@@ -276,14 +268,10 @@ export default function AddScreen() {
   );
 }
 
-// FIXED: Added : any to the theme variable
 const getStyles = (theme: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background },
-    scrollContent: { paddingHorizontal: 20, paddingTop: 60, paddingBottom: 40 },
-    header: { marginBottom: 25 },
-    headerTitle: { fontSize: 28, fontWeight: "bold", color: theme.text },
-    headerSubtitle: { fontSize: 15, color: theme.subtext, marginTop: 5 },
+    scrollContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 },
     tabContainer: {
       flexDirection: "row",
       backgroundColor: theme.inactiveTab,
