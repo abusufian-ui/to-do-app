@@ -12,11 +12,8 @@ import {
   View,
 } from "react-native";
 
-// --- THE FIX: MUTE EXPO GO SDK 53 WARNING ---
-// This stops the red screen from taking over your app in development!
 LogBox.ignoreLogs(["expo-notifications: Android Push notifications"]);
 
-// --- Matches login.tsx Theme perfectly for seamless transition ---
 const Colors = {
   light: {
     background: "#FFFFFF",
@@ -34,12 +31,12 @@ export default function RootIndex() {
   const router = useRouter();
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
 
-  // --- Splash Animation Values ---
   const scaleAnim = useRef(new Animated.Value(0.4)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const radarAnim = useRef(new Animated.Value(0)).current; // New radar pulse animation
 
   useEffect(() => {
-    // 1. Play the beautiful entry animation smoothly every time the app opens
+    // 1. Initial Entry Animation
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -54,17 +51,23 @@ export default function RootIndex() {
       }),
     ]).start();
 
-    // 2. Handle Background Initialization
+    // 2. Continuous Radar Pulse Loop
+    Animated.loop(
+      Animated.timing(radarAnim, {
+        toValue: 1,
+        duration: 2000,
+        useNativeDriver: true,
+      }),
+    ).start();
+
+    // 3. Handle Background Initialization
     const initializeApp = async () => {
       try {
-        // Check Auth Token
         const token = await AsyncStorage.getItem("userToken");
-
-        // Check if it's the first time opening the app to ask for permissions
         const hasLaunched = await AsyncStorage.getItem("hasLaunched");
+
         if (!hasLaunched) {
           try {
-            // Non-blocking request so the animation doesn't freeze
             Notifications.requestPermissionsAsync();
           } catch (e) {
             console.log("Notification permission bypassed for simulator.");
@@ -72,14 +75,13 @@ export default function RootIndex() {
           await AsyncStorage.setItem("hasLaunched", "true");
         }
 
-        // Wait exactly 1.8 seconds so the user can enjoy the splash animation
         setTimeout(() => {
           if (token) {
-            router.replace("/(tabs)"); // Logged in -> Teleport to Dashboard
+            router.replace("/(tabs)");
           } else {
-            router.replace("/login"); // Logged out -> Teleport to Login
+            router.replace("/login");
           }
-        }, 1800);
+        }, 2500); // Slightly longer to let the radar animation play a full cycle
       } catch (error) {
         console.error("Error during initialization:", error);
         router.replace("/login");
@@ -96,8 +98,31 @@ export default function RootIndex() {
           opacity: fadeAnim,
           transform: [{ scale: scaleAnim }],
           alignItems: "center",
+          justifyContent: "center",
         }}
       >
+        {/* Radar Pulse Background */}
+        <Animated.View
+          style={[
+            styles.radarPulse,
+            {
+              backgroundColor: theme.text,
+              opacity: radarAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.3, 0], // Fades out as it expands
+              }),
+              transform: [
+                {
+                  scale: radarAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 3], // Triples in size
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+
         {/* Dynamic Icon Box */}
         <View style={[styles.iconBox, { backgroundColor: theme.text }]}>
           <Ionicons name="school" size={56} color={theme.background} />
@@ -115,6 +140,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  radarPulse: {
+    position: "absolute",
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    top: 0, // Aligns perfectly behind the iconBox
+  },
   iconBox: {
     width: 100,
     height: 100,
@@ -127,10 +159,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 15,
     elevation: 10,
+    zIndex: 2, // Keeps icon above the pulse
   },
   title: {
     fontSize: 42,
     fontWeight: "900",
     letterSpacing: -1.5,
+    zIndex: 2,
   },
 });

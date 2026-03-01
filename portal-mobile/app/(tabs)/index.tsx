@@ -82,10 +82,12 @@ export default function HomeScreen() {
   const [todaysClasses, setTodaysClasses] = useState<any[]>([]);
   const [nextClass, setNextClass] = useState<any | null>(null);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [courses, setCourses] = useState<any[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(false); // GLOBAL OFFLINE STATE
 
   const processTimetable = (allClasses: any[]) => {
     const todayList = allClasses
@@ -120,35 +122,54 @@ export default function HomeScreen() {
 
   const fetchDashboardData = async () => {
     try {
-      // --- 1. INSTANT OFFLINE LOAD ---
-      const [cUser, cStats, cTime, cTasks] = await Promise.all([
+      // 1. INSTANT OFFLINE LOAD
+      const [cUser, cStats, cTime, cTasks, cCourses] = await Promise.all([
         AsyncStorage.getItem("off_dash_user"),
         AsyncStorage.getItem("off_dash_stats"),
         AsyncStorage.getItem("off_dash_time"),
         AsyncStorage.getItem("off_dash_tasks"),
+        AsyncStorage.getItem("off_dash_courses"),
       ]);
 
       if (cUser) setUserName(JSON.parse(cUser));
       if (cStats) setStats(JSON.parse(cStats));
       if (cTime) processTimetable(JSON.parse(cTime));
       if (cTasks) setTasks(JSON.parse(cTasks));
+      if (cCourses) setCourses(JSON.parse(cCourses));
 
-      if (cUser || cTime || cTasks) setIsLoading(false); // Drop loading screen instantly if we have cache
+      if (cUser || cTime || cTasks) setIsLoading(false);
 
-      // --- 2. FETCH FRESH SERVER DATA ---
+      // 2. FETCH FRESH SERVER DATA
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
       if (!BACKEND_URL || !token) return setIsLoading(false);
 
-      const config = { headers: { "x-auth-token": token } };
+      // AGGRESSIVE CACHE BUSTING HEADERS
+      const config = {
+        headers: {
+          "x-auth-token": token,
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+        timeout: 5000,
+      };
+
+      const timestamp = Date.now();
+
       const results = await Promise.allSettled([
-        axios.get(`${BACKEND_URL}/auth/user`, config),
-        axios.get(`${BACKEND_URL}/student-stats`, config),
-        axios.get(`${BACKEND_URL}/timetable`, config),
-        axios.get(`${BACKEND_URL}/tasks`, config),
+        axios.get(`${BACKEND_URL}/auth/user?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/student-stats?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
       ]);
 
-      // --- 3. UPDATE UI & SAVE TO CACHE ---
+      // DETECT OFFLINE MODE
+      const isAnyRejected = results.some((r) => r.status === "rejected");
+      setIsOffline(isAnyRejected);
+
+      // 3. UPDATE UI & SAVE TO CACHE
       if (results[0].status === "fulfilled" && results[0].value.data.name) {
         setUserName(results[0].value.data.name);
         AsyncStorage.setItem(
@@ -178,7 +199,15 @@ export default function HomeScreen() {
         setTasks(freshTasks);
         AsyncStorage.setItem("off_dash_tasks", JSON.stringify(freshTasks));
       }
+      if (results[4].status === "fulfilled") {
+        const freshCourses = Array.isArray(results[4].value.data)
+          ? results[4].value.data
+          : [];
+        setCourses(freshCourses);
+        AsyncStorage.setItem("off_dash_courses", JSON.stringify(freshCourses));
+      }
     } catch (error) {
+      setIsOffline(true);
       console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
@@ -228,7 +257,6 @@ export default function HomeScreen() {
       );
       setTasks(newTasks);
       setCompletingId(null);
-      // Cache optimistic update instantly
       AsyncStorage.setItem("off_dash_tasks", JSON.stringify(newTasks));
 
       try {
@@ -243,6 +271,21 @@ export default function HomeScreen() {
         fetchDashboardData();
       }
     }, 400);
+  };
+
+  const getCourseIcon = (courseName: string) => {
+    if (!courseName || courseName === "General")
+      return <Ionicons name="book" size={14} color={theme.subtext} />;
+
+    const matchedCourse = courses.find((c) => c.name === courseName);
+    if (
+      matchedCourse &&
+      (matchedCourse.type === "university" || matchedCourse.type === "uni")
+    ) {
+      return <UCPLogo width={14} height={14} color={theme.text} />;
+    }
+
+    return <Ionicons name="book" size={14} color={theme.subtext} />;
   };
 
   return (
@@ -264,8 +307,16 @@ export default function HomeScreen() {
           }
         >
           <View style={styles.dashboardInfo}>
-            <Text style={styles.dateText}>{todayDateStr}</Text>
-            <Text style={styles.greeting}>Hey, {userName}</Text>
+            <View>
+              <Text style={styles.dateText}>{todayDateStr}</Text>
+              <Text style={styles.greeting}>Hey, {userName}</Text>
+            </View>
+            {isOffline && (
+              <View style={styles.offlinePill}>
+                <Ionicons name="cloud-offline" size={12} color="#EF4444" />
+                <Text style={styles.offlineText}>Offline</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.bentoContainer}>
@@ -448,9 +499,18 @@ export default function HomeScreen() {
                       >
                         {task.name}
                       </Text>
-                      <Text style={styles.taskCourse}>
-                        {task.course || "General"}
-                      </Text>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        {getCourseIcon(task.course)}
+                        <Text style={styles.taskCourse}>
+                          {task.course || "General"}
+                        </Text>
+                      </View>
                     </View>
                     <View
                       style={[
@@ -485,7 +545,23 @@ const getStyles = (theme: any) =>
       justifyContent: "center",
       alignItems: "center",
     },
-    dashboardInfo: { paddingHorizontal: 24, marginBottom: 25 },
+    dashboardInfo: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingHorizontal: 24,
+      marginBottom: 25,
+    },
+    offlinePill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: "rgba(239, 68, 68, 0.1)",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 12,
+    },
+    offlineText: { color: "#EF4444", fontSize: 11, fontWeight: "800" },
     dateText: {
       color: theme.subtext,
       fontSize: 12,

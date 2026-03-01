@@ -116,7 +116,6 @@ export default function TabLayout() {
           }}
         />
 
-        {/* UPDATED TO ACADEMICS */}
         <Tabs.Screen
           name="classes"
           options={{
@@ -168,6 +167,7 @@ export default function TabLayout() {
           name="cash"
           options={{ href: null, title: "Cash Manager" }}
         />
+        <Tabs.Screen name="notes" options={{ href: null, title: "Notes" }} />
       </Tabs>
 
       <Modal visible={menuVisible} transparent animationType="fade">
@@ -212,7 +212,6 @@ export default function TabLayout() {
                 </Text>
               </TouchableOpacity>
 
-              {/* UPDATED TO ACADEMICS */}
               <TouchableOpacity
                 style={styles.menuItem}
                 onPress={() => navigateFromMenu("/classes")}
@@ -230,6 +229,20 @@ export default function TabLayout() {
                 <Ionicons name="list-outline" size={22} color={theme.text} />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
                   Tasks
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => navigateFromMenu("/notes")}
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={22}
+                  color={theme.text}
+                />
+                <Text style={[styles.menuItemText, { color: theme.text }]}>
+                  Notes
                 </Text>
               </TouchableOpacity>
 

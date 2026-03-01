@@ -24,16 +24,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 // --- THE FIX: MUTE EXPO GO SDK 53 WARNING ---
 LogBox.ignoreLogs(["expo-notifications: Android Push notifications"]);
 
-// --- TypeScript bypass for Notification Handler ---
-Notifications.setNotificationHandler({
-  handleNotification: async () =>
-    ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }) as any,
-});
-
 // --- Pure Monochrome Theme ---
 const Colors = {
   light: {
@@ -190,6 +180,13 @@ export default function SettingsScreen() {
         "General Alerts Enabled",
         "You will now be notified 5 mins before classes and 15 mins before tasks.",
       );
+    } else {
+      // IF THEY TURN IT OFF: Wipe out all pending alarms
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      Alert.alert(
+        "Alerts Muted",
+        "All scheduled task and class alarms have been cleared.",
+      );
     }
     setGeneralNotifs(value);
     await AsyncStorage.setItem("generalNotifs", value ? "true" : "false");
@@ -227,6 +224,9 @@ export default function SettingsScreen() {
             const keys = await AsyncStorage.getAllKeys();
             const cacheKeys = keys.filter((k) => k.startsWith("off_"));
             await AsyncStorage.multiRemove(cacheKeys);
+
+            // Clear alarms on logout just to be safe
+            await Notifications.cancelAllScheduledNotificationsAsync();
 
             if (router.canDismiss()) {
               router.dismissAll();

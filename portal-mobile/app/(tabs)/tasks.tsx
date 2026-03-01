@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
+import * as Notifications from "expo-notifications";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -43,6 +44,44 @@ const Colors = {
   },
 };
 
+export async function scheduleSmartAlert(
+  title: string,
+  body: string,
+  exactDate: Date,
+  eventId: string,
+  type: "task" | "class",
+) {
+  const offsetMinutes = type === "task" ? 15 : 5;
+  const warningDate = new Date(exactDate.getTime() - offsetMinutes * 60000);
+
+  if (warningDate > new Date()) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `${eventId}-warning`,
+      content: {
+        title: `⏳ Upcoming: ${title}`,
+        body: body,
+        categoryIdentifier: "smart-alert",
+        data: { eventId, type: "warning" },
+        sound: true,
+      },
+      trigger: warningDate as any,
+    });
+  }
+
+  if (exactDate > new Date()) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `${eventId}-exact`,
+      content: {
+        title: `🔴 NOW: ${title}`,
+        body: `It's time to start!`,
+        data: { eventId, type: "exact" },
+        sound: true,
+      },
+      trigger: exactDate as any,
+    });
+  }
+}
+
 const getPriorityConfig = (priority: string) => {
   switch (priority) {
     case "Critical":
@@ -77,6 +116,7 @@ const getPriorityConfig = (priority: string) => {
       };
   }
 };
+
 const getStatusConfig = (status: string) => {
   switch (status) {
     case "Scheduled":
@@ -92,6 +132,7 @@ const getStatusConfig = (status: string) => {
       return { icon: "ellipse-outline", color: "#737373", label: status };
   }
 };
+
 const formatDate = (dateString: string) => {
   if (!dateString) return "No date";
   return new Date(dateString).toLocaleDateString("en-GB", {
@@ -99,6 +140,7 @@ const formatDate = (dateString: string) => {
     month: "short",
   });
 };
+
 const getLocalYYYYMMDD = (date: Date) => {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -119,6 +161,7 @@ export default function TasksScreen() {
   const [courses, setCourses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isOffline, setIsOffline] = useState(false); // GLOBAL OFFLINE STATE
 
   const [expandedTasks, setExpandedTasks] = useState<{
     [key: string]: boolean;
@@ -136,6 +179,7 @@ export default function TasksScreen() {
       label: "Today",
       dateVal: getLocalYYYYMMDD(today),
     });
+
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     filters.push({
@@ -143,6 +187,7 @@ export default function TasksScreen() {
       label: "Tomorrow",
       dateVal: getLocalYYYYMMDD(tomorrow),
     });
+
     for (let i = 2; i <= 6; i++) {
       const futureDate = new Date(today);
       futureDate.setDate(futureDate.getDate() + i);
@@ -156,9 +201,29 @@ export default function TasksScreen() {
     return filters;
   }, []);
 
+  const syncTaskNotifications = async (tasksList: any[]) => {
+    const generalNotifs = await AsyncStorage.getItem("generalNotifs");
+    if (generalNotifs !== "true") return;
+
+    const active = tasksList.filter((t) => !t.completed && t.date && t.time);
+    for (const task of active) {
+      try {
+        const exactDate = new Date(`${task.date}T${task.time}:00`);
+        if (!isNaN(exactDate.getTime()) && exactDate > new Date()) {
+          await scheduleSmartAlert(
+            task.name,
+            `Your task starts in 15 minutes. Acknowledge to mute final alarm.`,
+            exactDate,
+            `task-${task._id}`,
+            "task",
+          );
+        }
+      } catch (e) {}
+    }
+  };
+
   const fetchData = async () => {
     try {
-      // --- 1. INSTANT OFFLINE LOAD ---
       const [cTasks, cCourses] = await Promise.all([
         AsyncStorage.getItem("off_tasks_data"),
         AsyncStorage.getItem("off_tasks_courses"),
@@ -167,28 +232,49 @@ export default function TasksScreen() {
       if (cCourses) setCourses(JSON.parse(cCourses));
       if (cTasks || cCourses) setIsLoading(false);
 
-      // --- 2. FETCH FRESH DATA ---
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
       if (!BACKEND_URL || !token) return setIsLoading(false);
 
-      const config = { headers: { "x-auth-token": token } };
-      const [tasksRes, coursesRes] = await Promise.all([
-        axios.get(`${BACKEND_URL}/tasks`, config),
-        axios.get(`${BACKEND_URL}/courses`, config),
+      // AGGRESSIVE CACHE BUSTING HEADERS
+      const config = {
+        headers: {
+          "x-auth-token": token,
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+        timeout: 5000,
+      };
+
+      const timestamp = Date.now();
+      const results = await Promise.allSettled([
+        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
       ]);
 
-      // --- 3. UPDATE & CACHE ---
-      const freshTasks = Array.isArray(tasksRes.data) ? tasksRes.data : [];
-      const freshCourses = Array.isArray(coursesRes.data)
-        ? coursesRes.data
-        : [];
+      // DETECT OFFLINE MODE
+      const isAnyRejected = results.some((r) => r.status === "rejected");
+      setIsOffline(isAnyRejected);
 
-      setTasks(freshTasks);
-      setCourses(freshCourses);
-      AsyncStorage.setItem("off_tasks_data", JSON.stringify(freshTasks));
-      AsyncStorage.setItem("off_tasks_courses", JSON.stringify(freshCourses));
+      if (results[0].status === "fulfilled") {
+        const freshTasks = Array.isArray(results[0].value.data)
+          ? results[0].value.data
+          : [];
+        setTasks(freshTasks);
+        AsyncStorage.setItem("off_tasks_data", JSON.stringify(freshTasks));
+        syncTaskNotifications(freshTasks);
+      }
+
+      if (results[1].status === "fulfilled") {
+        const freshCourses = Array.isArray(results[1].value.data)
+          ? results[1].value.data
+          : [];
+        setCourses(freshCourses);
+        AsyncStorage.setItem("off_tasks_courses", JSON.stringify(freshCourses));
+      }
     } catch (error) {
+      setIsOffline(true);
       console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
@@ -199,6 +285,7 @@ export default function TasksScreen() {
   useEffect(() => {
     fetchData();
   }, []);
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchData();
@@ -209,7 +296,7 @@ export default function TasksScreen() {
       t._id === taskId ? { ...t, ...updateData } : t,
     );
     setTasks(updated);
-    AsyncStorage.setItem("off_tasks_data", JSON.stringify(updated)); // Instantly update cache
+    AsyncStorage.setItem("off_tasks_data", JSON.stringify(updated));
     try {
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
@@ -229,6 +316,7 @@ export default function TasksScreen() {
     });
     setStatusSheetTask(null);
   };
+
   const toggleSubtask = (taskId: string, subtaskIndex: number) => {
     const task = tasks.find((t) => t._id === taskId);
     if (!task) return;
@@ -239,19 +327,20 @@ export default function TasksScreen() {
     if (selectedTask && selectedTask._id === taskId)
       setSelectedTask({ ...selectedTask, subTasks: updatedSubTasks });
   };
+
   const toggleExpand = (taskId: string) =>
     setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
 
   const getCourseIcon = (courseName: string) => {
     if (courseName === "Event")
-      return <Ionicons name="calendar" size={16} color="#F43F5E" />;
+      return <Ionicons name="calendar" size={14} color="#F43F5E" />;
     const matchedCourse = courses.find((c) => c.name === courseName);
     if (
       matchedCourse &&
       (matchedCourse.type === "university" || matchedCourse.type === "uni")
     )
-      return <UCPLogo width={16} height={16} color="#3B82F6" />;
-    return <Ionicons name="book" size={16} color={theme.subtext} />;
+      return <UCPLogo width={14} height={14} color={theme.text} />;
+    return <Ionicons name="book" size={14} color={theme.subtext} />;
   };
 
   const activeTasks = tasks
@@ -464,6 +553,17 @@ export default function TasksScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: statusBarHeight }]}>
+      {/* HEADER WITH OFFLINE PILL */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Tasks</Text>
+        {isOffline && (
+          <View style={styles.offlinePill}>
+            <Ionicons name="cloud-offline" size={12} color="#EF4444" />
+            <Text style={styles.offlineText}>Offline Mode</Text>
+          </View>
+        )}
+      </View>
+
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, activeTab === "active" && styles.activeTab]}
@@ -730,6 +830,29 @@ export default function TasksScreen() {
 const getStyles = (theme: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background },
+    header: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingHorizontal: 24,
+      paddingBottom: 15,
+    },
+    headerTitle: {
+      fontSize: 32,
+      fontWeight: "900",
+      color: theme.text,
+      letterSpacing: -1,
+    },
+    offlinePill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: "rgba(239, 68, 68, 0.1)",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 12,
+    },
+    offlineText: { color: "#EF4444", fontSize: 11, fontWeight: "800" },
     tabContainer: {
       flexDirection: "row",
       backgroundColor: theme.card,
