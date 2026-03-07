@@ -31,7 +31,6 @@ export async function scheduleSmartAlert(
   const offsetMinutes = type === "task" ? 15 : 5;
   const warningDate = new Date(exactDate.getTime() - offsetMinutes * 60000);
 
-  // 1. Schedule the Early Warning (with the Acknowledge button)
   if (warningDate > new Date()) {
     await Notifications.scheduleNotificationAsync({
       identifier: `${eventId}-warning`,
@@ -42,11 +41,10 @@ export async function scheduleSmartAlert(
         data: { eventId, type: "warning" },
         sound: true,
       },
-      trigger: warningDate as any, // <-- TS Override
+      trigger: { date: warningDate, channelId: "default" } as any, // <--- THE FIX
     });
   }
 
-  // 2. Schedule the Exact Time Fallback
   if (exactDate > new Date()) {
     await Notifications.scheduleNotificationAsync({
       identifier: `${eventId}-exact`,
@@ -56,7 +54,7 @@ export async function scheduleSmartAlert(
         data: { eventId, type: "exact" },
         sound: true,
       },
-      trigger: exactDate as any, // <-- TS Override
+      trigger: { date: exactDate, channelId: "default" } as any, // <--- THE FIX
     });
   }
 }
@@ -92,6 +90,7 @@ const WEEK_DAYS = [
   "Thursday",
   "Friday",
   "Saturday",
+  "Sunday",
 ];
 const DEGREE_TOTAL_CREDITS = 133;
 
@@ -873,7 +872,7 @@ export default function ClassesScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: statusBarHeight }]}>
+    <View style={styles.container}>
       {/* --- SMART INVERTING HORIZONTAL TAB BAR --- */}
       <View>
         <ScrollView

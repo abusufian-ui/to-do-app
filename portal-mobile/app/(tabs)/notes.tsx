@@ -67,7 +67,6 @@ const getReadTime = (text: string) => {
   return `${minutes} min read`;
 };
 
-// Generates perfectly formatted read-only HTML with FULL VS Code Syntax Highlighting
 const generateHtml = (content: string, themeMode: string) => `
 <!DOCTYPE html>
 <html>
@@ -100,7 +99,6 @@ const generateHtml = (content: string, themeMode: string) => `
       border: 1px solid ${themeMode === "dark" ? "#333" : "#E5E5E5"};
       position: relative;
     }
-    /* Stop hljs from adding a duplicate background color */
     .hljs { background: transparent !important; padding: 0 !important; }
     
     .custom-copy-btn {
@@ -136,16 +134,13 @@ const generateHtml = (content: string, themeMode: string) => `
     var svgCheck = '<svg viewBox="0 0 24 24" width="14" height="14" stroke="#10B981" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!';
 
     document.querySelectorAll('pre').forEach(function(pre) {
-      // FIX: Wrap Quill's pre text in a <code> block so highlight.js applies VS Code colors correctly
       var code = document.createElement('code');
       code.innerHTML = pre.innerHTML;
       pre.innerHTML = '';
       pre.appendChild(code);
       
-      // Execute the syntax highlight on the newly created code block
       hljs.highlightElement(code);
 
-      // Inject the copy button
       var btn = document.createElement('button');
       btn.className = 'custom-copy-btn';
       btn.innerHTML = svgCopy;
@@ -153,11 +148,8 @@ const generateHtml = (content: string, themeMode: string) => `
       btn.onclick = function(e) {
         e.stopPropagation();
         e.preventDefault();
-        
-        // Grab the raw text payload to copy
         var rawText = code.innerText.trim();
         window.location.href = 'copycode://' + encodeURIComponent(rawText);
-        
         btn.innerHTML = svgCheck;
         setTimeout(() => { btn.innerHTML = svgCopy; }, 2000);
       };
@@ -178,28 +170,81 @@ export default function NotesScreen() {
 
   const [notes, setNotes] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
+  const [timetable, setTimetable] = useState<any[]>([]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
 
-  // --- FILTER & SEARCH STATES ---
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCourses, setSelectedCourses] = useState<string[]>([]); // Array for Multi-select
+  const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
   const [selectedDateRange, setSelectedDateRange] = useState("all");
 
   const [isCourseFilterOpen, setIsCourseFilterOpen] = useState(false);
   const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
-
   const [viewingNote, setViewingNote] = useState<any>(null);
+
+  // --- THE ULTIMATE DUAL-COLLECTION MATCHER ---
+  const getMatchedCourse = (note: any) => {
+    if (!note) return null;
+
+    const nId = String(
+      note.courseId?._id || note.courseId?.id || note.courseId || "",
+    ).trim();
+    const nName = String(note.courseName || note.course || "")
+      .trim()
+      .toLowerCase();
+
+    // 1. Check Standard Courses List
+    let matchedC = courses.find((c) => {
+      const cId = String(c._id || c.id).trim();
+      const cName = String(c.name || "")
+        .trim()
+        .toLowerCase();
+
+      if (cId && nId && cId === nId) return true;
+      if (cName && nName && cName === nName) return true;
+      if (cName && nId && cName === nId.toLowerCase()) return true;
+      return false;
+    });
+
+    if (matchedC) return matchedC;
+
+    // 2. Check Timetable List (In case Web App saved Timetable IDs instead)
+    let matchedT = timetable.find((t) => {
+      const tId = String(t._id || t.id).trim();
+      const tName = String(t.courseName || t.name || "")
+        .trim()
+        .toLowerCase();
+
+      if (tId && nId && tId === nId) return true;
+      if (tName && nName && tName === nName) return true;
+      if (tName && nId && tName === nId.toLowerCase()) return true;
+      return false;
+    });
+
+    if (matchedT) {
+      return {
+        _id: matchedT._id || matchedT.id,
+        name: matchedT.courseName || matchedT.name,
+        type: "university", // Automatically treat timetable entries as uni courses
+      };
+    }
+
+    return null; // Fallback to "General" if both fail
+  };
 
   const fetchData = async () => {
     try {
-      const [cNotes, cCourses] = await Promise.all([
+      const [cNotes, cCourses, cTime] = await Promise.all([
         AsyncStorage.getItem("off_notes_data"),
         AsyncStorage.getItem("off_acad_courses"),
+        AsyncStorage.getItem("off_acad_time"),
       ]);
+
       if (cNotes) setNotes(JSON.parse(cNotes));
       if (cCourses) setCourses(JSON.parse(cCourses));
+      if (cTime) setTimetable(JSON.parse(cTime));
       if (cNotes) setIsLoading(false);
 
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -209,12 +254,21 @@ export default function NotesScreen() {
         return;
       }
 
-      const config = { headers: { "x-auth-token": token }, timeout: 5000 };
-      const timestamp = Date.now();
+      const config = {
+        headers: {
+          "x-auth-token": token,
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+        timeout: 5000,
+      };
 
-      const [notesRes, coursesRes] = await Promise.allSettled([
+      const timestamp = Date.now();
+      const [notesRes, coursesRes, timeRes] = await Promise.allSettled([
         axios.get(`${BACKEND_URL}/notes?t=${timestamp}`, config),
         axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config),
       ]);
 
       if (notesRes.status === "rejected" || coursesRes.status === "rejected") {
@@ -240,9 +294,16 @@ export default function NotesScreen() {
         setCourses(freshCourses);
         AsyncStorage.setItem("off_acad_courses", JSON.stringify(freshCourses));
       }
+
+      if (timeRes.status === "fulfilled") {
+        const freshTime = Array.isArray(timeRes.value.data)
+          ? timeRes.value.data
+          : [];
+        setTimetable(freshTime);
+        AsyncStorage.setItem("off_acad_time", JSON.stringify(freshTime));
+      }
     } catch (error) {
       setIsOffline(true);
-      console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -262,27 +323,32 @@ export default function NotesScreen() {
   const filteredNotes = useMemo(() => {
     return notes
       .filter((note) => {
-        // Search Query
+        const matchedCourse = getMatchedCourse(note);
+
         const query = searchQuery.toLowerCase();
         const matchSearch =
           note.title.toLowerCase().includes(query) ||
           stripHtml(note.content).toLowerCase().includes(query) ||
-          courses
-            .find((c) => (c._id || c.id) === note.courseId)
-            ?.name?.toLowerCase()
-            .includes(query);
+          (matchedCourse?.name?.toLowerCase() || "").includes(query);
 
         if (!matchSearch) return false;
 
-        // Multi-Select Course Filter
-        if (
-          selectedCourses.length > 0 &&
-          !selectedCourses.includes(note.courseId)
-        ) {
-          return false;
+        if (selectedCourses.length > 0) {
+          const matchesSelected = selectedCourses.some((selectedId) => {
+            if (
+              selectedId === "general-task" &&
+              (!matchedCourse || matchedCourse.name === "General")
+            )
+              return true;
+            return (
+              matchedCourse &&
+              (matchedCourse._id === selectedId ||
+                matchedCourse.id === selectedId)
+            );
+          });
+          if (!matchesSelected) return false;
         }
 
-        // Date Range Filter
         if (selectedDateRange !== "all") {
           const noteDate = new Date(note.createdAt).getTime();
           const now = Date.now();
@@ -298,7 +364,14 @@ export default function NotesScreen() {
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
-  }, [notes, courses, searchQuery, selectedCourses, selectedDateRange]);
+  }, [
+    notes,
+    courses,
+    timetable,
+    searchQuery,
+    selectedCourses,
+    selectedDateRange,
+  ]);
 
   const handleDelete = (noteId: string) => {
     Alert.alert(
@@ -323,7 +396,7 @@ export default function NotesScreen() {
             } catch (error) {
               Alert.alert(
                 "Connection Error",
-                "Could not reach server to delete. Connect to Wi-Fi and try again.",
+                "Could not reach server to delete.",
               );
             }
           },
@@ -338,22 +411,16 @@ export default function NotesScreen() {
     );
   };
 
-  const selectedCourse = courses.find(
-    (c) => (c._id || c.id) === viewingNote?.courseId,
-  );
-  const uniqueCourseIds = Array.from(new Set(notes.map((n) => n.courseId)));
-
   return (
-    <View style={[styles.container, { paddingTop: statusBarHeight }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Notes</Text>
-        {isOffline && (
+    <View style={styles.container}>
+      {isOffline && (
+        <View style={styles.offlineContainer}>
           <View style={styles.offlinePill}>
             <Ionicons name="cloud-offline" size={12} color="#EF4444" />
             <Text style={styles.offlineText}>Offline Mode</Text>
           </View>
-        )}
-      </View>
+        </View>
+      )}
 
       <View style={styles.searchSection}>
         <View style={styles.searchBar}>
@@ -476,9 +543,10 @@ export default function NotesScreen() {
           ) : (
             <View style={styles.grid}>
               {filteredNotes.map((note) => {
-                const matchedCourse = courses.find(
-                  (c) => (c._id || c.id) === note.courseId,
-                );
+                const matchedCourse = getMatchedCourse(note);
+                const isUni =
+                  matchedCourse?.type === "uni" ||
+                  matchedCourse?.type === "university";
                 const rawText = stripHtml(note.content);
 
                 return (
@@ -498,8 +566,7 @@ export default function NotesScreen() {
 
                     <View style={styles.noteFooter}>
                       <View style={styles.coursePill}>
-                        {matchedCourse?.type === "uni" ||
-                        matchedCourse?.type === "university" ? (
+                        {isUni ? (
                           <UCPLogo width={12} height={12} color={theme.brand} />
                         ) : (
                           <Ionicons name="book" size={12} color={theme.brand} />
@@ -509,7 +576,10 @@ export default function NotesScreen() {
                         </Text>
                       </View>
                       <Text style={styles.dateText}>
-                        {new Date(note.createdAt).toLocaleDateString()}
+                        {new Date(note.createdAt).toLocaleDateString("en-GB", {
+                          day: "numeric",
+                          month: "long",
+                        })}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -520,7 +590,6 @@ export default function NotesScreen() {
         </ScrollView>
       )}
 
-      {/* --- MULTI-SELECT COURSE FILTER MODAL --- */}
       <Modal visible={isCourseFilterOpen} transparent animationType="fade">
         <TouchableOpacity
           style={styles.modalOverlay}
@@ -555,7 +624,10 @@ export default function NotesScreen() {
                 style={styles.modalOpt}
                 onPress={() => toggleCourseSelect("general-task")}
               >
-                <Text style={styles.modalOptText}>General</Text>
+                <View style={styles.modalOptLeft}>
+                  <Ionicons name="book" size={16} color={theme.subtext} />
+                  <Text style={styles.modalOptText}>General</Text>
+                </View>
                 <Ionicons
                   name={
                     selectedCourses.includes("general-task")
@@ -571,38 +643,39 @@ export default function NotesScreen() {
                 />
               </TouchableOpacity>
 
-              {uniqueCourseIds
-                .filter((id) => id !== "general-task")
-                .map((cId) => {
-                  const matchedCourse = courses.find(
-                    (c) => (c._id || c.id) === cId,
-                  );
-                  if (!matchedCourse) return null;
-                  const isSelected = selectedCourses.includes(cId);
+              {courses.map((course) => {
+                const cId = course._id || course.id;
+                const isSelected = selectedCourses.includes(cId);
+                const isUni =
+                  course.type === "uni" || course.type === "university";
 
-                  return (
-                    <TouchableOpacity
-                      key={cId}
-                      style={styles.modalOpt}
-                      onPress={() => toggleCourseSelect(cId)}
-                    >
-                      <Text style={styles.modalOptText}>
-                        {matchedCourse.name}
-                      </Text>
-                      <Ionicons
-                        name={isSelected ? "checkbox" : "square-outline"}
-                        size={22}
-                        color={isSelected ? theme.brand : theme.subtext}
-                      />
-                    </TouchableOpacity>
-                  );
-                })}
+                return (
+                  <TouchableOpacity
+                    key={cId}
+                    style={styles.modalOpt}
+                    onPress={() => toggleCourseSelect(cId)}
+                  >
+                    <View style={styles.modalOptLeft}>
+                      {isUni ? (
+                        <UCPLogo width={16} height={16} color={theme.text} />
+                      ) : (
+                        <Ionicons name="book" size={16} color={theme.subtext} />
+                      )}
+                      <Text style={styles.modalOptText}>{course.name}</Text>
+                    </View>
+                    <Ionicons
+                      name={isSelected ? "checkbox" : "square-outline"}
+                      size={22}
+                      color={isSelected ? theme.brand : theme.subtext}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>
 
-      {/* --- DATE RANGE FILTER MODAL --- */}
       <Modal visible={isDateFilterOpen} transparent animationType="fade">
         <TouchableOpacity
           style={styles.modalOverlay}
@@ -618,7 +691,6 @@ export default function NotesScreen() {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Filter by Date</Text>
             </View>
-
             <TouchableOpacity
               style={styles.modalOpt}
               onPress={() => {
@@ -641,7 +713,6 @@ export default function NotesScreen() {
                 <Ionicons name="checkmark" size={20} color={theme.brand} />
               )}
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.modalOpt}
               onPress={() => {
@@ -664,7 +735,6 @@ export default function NotesScreen() {
                 <Ionicons name="checkmark" size={20} color={theme.brand} />
               )}
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.modalOpt}
               onPress={() => {
@@ -691,7 +761,6 @@ export default function NotesScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* --- FULL SCREEN READ-ONLY VIEWER --- */}
       <Modal
         visible={!!viewingNote}
         animationType="slide"
@@ -723,20 +792,32 @@ export default function NotesScreen() {
 
             <View style={styles.metaRow}>
               <View style={styles.coursePill}>
-                {selectedCourse?.type === "uni" ||
-                selectedCourse?.type === "university" ? (
-                  <UCPLogo width={14} height={14} color={theme.brand} />
-                ) : (
-                  <Ionicons name="book" size={14} color={theme.brand} />
-                )}
-                <Text style={styles.coursePillText} numberOfLines={1}>
-                  {selectedCourse?.name || "General"}
-                </Text>
+                {(() => {
+                  const matchedViewerCourse = getMatchedCourse(viewingNote);
+                  const isViewerUni =
+                    matchedViewerCourse?.type === "uni" ||
+                    matchedViewerCourse?.type === "university";
+                  return (
+                    <>
+                      {isViewerUni ? (
+                        <UCPLogo width={14} height={14} color={theme.brand} />
+                      ) : (
+                        <Ionicons name="book" size={14} color={theme.brand} />
+                      )}
+                      <Text style={styles.coursePillText} numberOfLines={1}>
+                        {matchedViewerCourse?.name || "General"}
+                      </Text>
+                    </>
+                  );
+                })()}
               </View>
               <Text style={styles.viewerDate}>
                 {new Date(
                   viewingNote?.createdAt || Date.now(),
-                ).toLocaleDateString()}
+                ).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "long",
+                })}
               </Text>
               <Text style={styles.viewerDot}>•</Text>
               <Text style={styles.viewerReadTime}>
@@ -800,19 +881,11 @@ const getStyles = (theme: any) =>
       justifyContent: "center",
       alignItems: "center",
     },
-
-    header: {
+    offlineContainer: {
       flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
+      justifyContent: "center",
       paddingHorizontal: 24,
       paddingBottom: 10,
-    },
-    headerTitle: {
-      fontSize: 32,
-      fontWeight: "900",
-      color: theme.text,
-      letterSpacing: -1,
     },
     offlinePill: {
       flexDirection: "row",
@@ -824,8 +897,7 @@ const getStyles = (theme: any) =>
       borderRadius: 12,
     },
     offlineText: { color: "#EF4444", fontSize: 11, fontWeight: "800" },
-
-    searchSection: { paddingHorizontal: 24, marginBottom: 16 },
+    searchSection: { paddingHorizontal: 24, marginBottom: 16, marginTop: 10 },
     searchBar: {
       flexDirection: "row",
       alignItems: "center",
@@ -844,8 +916,6 @@ const getStyles = (theme: any) =>
       color: theme.text,
       fontWeight: "500",
     },
-
-    // New Filter Dropdown Styles
     filterControlRow: { flexDirection: "row", alignItems: "center", gap: 10 },
     filterDropdownBtn: {
       flex: 1,
@@ -866,9 +936,7 @@ const getStyles = (theme: any) =>
     },
     filterDropdownText: { fontSize: 13, fontWeight: "700", color: theme.text },
     filterDropdownTextActive: { color: theme.invertedText },
-
     scrollContent: { paddingHorizontal: 24, paddingBottom: 100 },
-
     emptyContainer: {
       alignItems: "center",
       justifyContent: "center",
@@ -887,7 +955,6 @@ const getStyles = (theme: any) =>
       marginTop: 8,
       textAlign: "center",
     },
-
     grid: { gap: 16 },
     noteCard: {
       backgroundColor: theme.card,
@@ -932,8 +999,6 @@ const getStyles = (theme: any) =>
       maxWidth: 150,
     },
     dateText: { fontSize: 12, fontWeight: "600", color: theme.subtext },
-
-    // Unified Modal Styles
     modalOverlay: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.5)",
@@ -962,9 +1027,8 @@ const getStyles = (theme: any) =>
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
     },
+    modalOptLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
     modalOptText: { fontSize: 16, fontWeight: "600", color: theme.text },
-
-    // Viewer Styles
     viewerContainer: { flex: 1, backgroundColor: theme.background },
     viewerHeader: {
       flexDirection: "row",

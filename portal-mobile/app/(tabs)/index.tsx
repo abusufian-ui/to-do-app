@@ -34,6 +34,9 @@ const Colors = {
     invertedBg: "#000000",
     invertedText: "#FFFFFF",
     invertedSubtext: "#A3A3A3",
+    danger: "#EF4444", // Added missing color
+    brand: "#3B82F6", // Added missing color
+    success: "#10B981", // Added missing color
   },
   dark: {
     background: "#000000",
@@ -44,6 +47,9 @@ const Colors = {
     invertedBg: "#FFFFFF",
     invertedText: "#000000",
     invertedSubtext: "#737373",
+    danger: "#F87171", // Added missing color
+    brand: "#60A5FA", // Added missing color
+    success: "#34D399", // Added missing color
   },
 };
 
@@ -87,7 +93,7 @@ export default function HomeScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
-  const [isOffline, setIsOffline] = useState(false); // GLOBAL OFFLINE STATE
+  const [isOffline, setIsOffline] = useState(false);
 
   const processTimetable = (allClasses: any[]) => {
     const todayList = allClasses
@@ -122,7 +128,6 @@ export default function HomeScreen() {
 
   const fetchDashboardData = async () => {
     try {
-      // 1. INSTANT OFFLINE LOAD
       const [cUser, cStats, cTime, cTasks, cCourses] = await Promise.all([
         AsyncStorage.getItem("off_dash_user"),
         AsyncStorage.getItem("off_dash_stats"),
@@ -139,12 +144,10 @@ export default function HomeScreen() {
 
       if (cUser || cTime || cTasks) setIsLoading(false);
 
-      // 2. FETCH FRESH SERVER DATA
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
       if (!BACKEND_URL || !token) return setIsLoading(false);
 
-      // AGGRESSIVE CACHE BUSTING HEADERS
       const config = {
         headers: {
           "x-auth-token": token,
@@ -156,7 +159,6 @@ export default function HomeScreen() {
       };
 
       const timestamp = Date.now();
-
       const results = await Promise.allSettled([
         axios.get(`${BACKEND_URL}/auth/user?t=${timestamp}`, config),
         axios.get(`${BACKEND_URL}/student-stats?t=${timestamp}`, config),
@@ -165,11 +167,9 @@ export default function HomeScreen() {
         axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
       ]);
 
-      // DETECT OFFLINE MODE
       const isAnyRejected = results.some((r) => r.status === "rejected");
       setIsOffline(isAnyRejected);
 
-      // 3. UPDATE UI & SAVE TO CACHE
       if (results[0].status === "fulfilled" && results[0].value.data.name) {
         setUserName(results[0].value.data.name);
         AsyncStorage.setItem(
@@ -226,19 +226,67 @@ export default function HomeScreen() {
     fetchDashboardData();
   };
 
-  const activeTasks = tasks
-    .filter((t) => !t.completed)
+  // --- SMART DASHBOARD FILTERING (Past + Current Week ONLY) ---
+  const getStartOfWeek = () => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const start = new Date(d.setDate(diff));
+    start.setHours(0, 0, 0, 0);
+    return start;
+  };
+
+  const getEndOfWeek = () => {
+    const start = getStartOfWeek();
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    end.setHours(23, 59, 59, 999);
+    return end;
+  };
+
+  const getTaskTime = (t: any) => {
+    if (t.date) {
+      const [y, m, d] = t.date.split("-");
+      return new Date(parseInt(y), parseInt(m) - 1, parseInt(d)).getTime();
+    }
+    return new Date(t.createdAt).getTime();
+  };
+
+  const startOfWeekTime = getStartOfWeek().getTime();
+  const endOfWeekTime = getEndOfWeek().getTime();
+
+  const incompleteTasks = tasks.filter((t) => !t.completed);
+
+  // 1. Grab overdue/past tasks and sort by creation date
+  const previousTasks = incompleteTasks
+    .filter((t) => getTaskTime(t) < startOfWeekTime)
     .sort(
       (a, b) =>
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
+
+  // 2. Grab current week tasks and sort by creation date
+  const currentWeekTasks = incompleteTasks
+    .filter((t) => {
+      const time = getTaskTime(t);
+      return time >= startOfWeekTime && time <= endOfWeekTime;
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+  // Combine them (Previous tasks naturally bubble to the top!)
+  const activeTasks = [...previousTasks, ...currentWeekTasks];
+  const actionItems = activeTasks.slice(0, 5); // Show up to 5 actionable items
+
   const completedTodayTasks = tasks.filter(
     (t) =>
       t.completed &&
       new Date(t.updatedAt || t.createdAt).toDateString() ===
         new Date().toDateString(),
   );
-  const actionItems = activeTasks.slice(0, 4);
+
   const totalTasksScope = activeTasks.length + completedTodayTasks.length;
 
   const toggleTaskCompletion = async (taskId: string) => {
@@ -463,6 +511,8 @@ export default function HomeScreen() {
             ) : (
               actionItems.map((task, index) => {
                 const isCompleting = task._id === completingId;
+                const isOverdue = getTaskTime(task) < startOfWeekTime;
+
                 return (
                   <TouchableOpacity
                     key={task._id}
@@ -510,6 +560,19 @@ export default function HomeScreen() {
                         <Text style={styles.taskCourse}>
                           {task.course || "General"}
                         </Text>
+                        {/* Tiny red indicator if the task was carried over from previous weeks */}
+                        {isOverdue && (
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              fontWeight: "800",
+                              color: theme.danger,
+                              marginLeft: 4,
+                            }}
+                          >
+                            PAST DUE
+                          </Text>
+                        )}
                       </View>
                     </View>
                     <View

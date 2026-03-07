@@ -39,6 +39,20 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app needs access to your gallery to attach images to snaps.",
+          "cameraPermission": "The app needs camera access to take pictures of the whiteboard."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "The app needs microphone access to record voice snaps during lectures."
+        }
       ]
     ],
     "experiments": {

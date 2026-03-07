@@ -240,10 +240,8 @@ export default function SettingsScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: statusBarHeight }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Settings</Text>
-      </View>
+    <View style={styles.container}>
+      {/* The custom header block has been removed, and the manual padding is gone */}
 
       {isLoading ? (
         <View style={styles.loadingContainer}>

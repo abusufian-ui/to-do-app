@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import axios from "axios";
 import * as Notifications from "expo-notifications";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  Animated,
   Modal,
   Platform,
   RefreshControl,
@@ -13,12 +14,14 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
   useColorScheme,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import UCPLogo from "../../components/UCPLogo";
 
 const Colors = {
@@ -30,7 +33,9 @@ const Colors = {
     card: "#FAFAFA",
     invertedBg: "#000000",
     invertedText: "#FFFFFF",
-    invertedSubtext: "#A3A3A3",
+    danger: "#EF4444",
+    brand: "#3B82F6",
+    success: "#10B981",
   },
   dark: {
     background: "#000000",
@@ -40,45 +45,99 @@ const Colors = {
     card: "#0A0A0A",
     invertedBg: "#FFFFFF",
     invertedText: "#000000",
-    invertedSubtext: "#737373",
+    danger: "#F87171",
+    brand: "#60A5FA",
+    success: "#34D399",
   },
 };
 
-export async function scheduleSmartAlert(
-  title: string,
-  body: string,
-  exactDate: Date,
+// --- NEW TASK SCHEDULING ENGINE ---
+export async function scheduleTaskAlerts(
+  taskName: string,
+  taskDateStr: string,
+  taskTimeStr: string,
   eventId: string,
-  type: "task" | "class",
 ) {
-  const offsetMinutes = type === "task" ? 15 : 5;
-  const warningDate = new Date(exactDate.getTime() - offsetMinutes * 60000);
+  const now = new Date();
+  const baseConfig = {
+    categoryIdentifier: "smart-alert",
+    data: { eventId },
+    sound: true,
+    color: "#10B981", // Native icon tint
+  };
+  const [year, month, day] = taskDateStr.split("-");
 
-  if (warningDate > new Date()) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: `${eventId}-warning`,
-      content: {
-        title: `⏳ Upcoming: ${title}`,
-        body: body,
-        categoryIdentifier: "smart-alert",
-        data: { eventId, type: "warning" },
-        sound: true,
-      },
-      trigger: warningDate as any,
-    });
-  }
+  if (taskTimeStr) {
+    const timeMatch = taskTimeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+    if (!timeMatch) return;
+    let hours = parseInt(timeMatch[1], 10);
+    const minutes = parseInt(timeMatch[2], 10);
+    const modifier = timeMatch[3];
+    if (modifier && modifier.toUpperCase() === "PM" && hours < 12) hours += 12;
+    if (modifier && modifier.toUpperCase() === "AM" && hours === 12) hours = 0;
 
-  if (exactDate > new Date()) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: `${eventId}-exact`,
-      content: {
-        title: `🔴 NOW: ${title}`,
-        body: `It's time to start!`,
-        data: { eventId, type: "exact" },
-        sound: true,
-      },
-      trigger: exactDate as any,
-    });
+    const exactDate = new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      hours,
+      minutes,
+      0,
+      0,
+    );
+    const warningDate = new Date(exactDate.getTime() - 15 * 60000);
+
+    if (warningDate > now) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: `${eventId}-warning`,
+        content: {
+          ...baseConfig,
+          title: `⏳ Task Upcoming`,
+          body: `${taskName} Task is scheduled for ${taskTimeStr}`,
+        },
+        trigger: { date: warningDate, channelId: "default" } as any,
+      });
+    }
+
+    const followUps = [0, 30, 60];
+    for (let i = 0; i < followUps.length; i++) {
+      const triggerDate = new Date(exactDate.getTime() + followUps[i] * 60000);
+      if (triggerDate > now) {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `${eventId}-followup-${i}`,
+          content: {
+            ...baseConfig,
+            title: `📌 Task Reminder`,
+            body: `You have the task for ${taskTimeStr} today please check on it`,
+          },
+          trigger: { date: triggerDate, channelId: "default" } as any,
+        });
+      }
+    }
+  } else {
+    const hoursToRemind = [9, 11, 13, 15, 17, 19, 21];
+    for (let i = 0; i < hoursToRemind.length; i++) {
+      const triggerDate = new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        hoursToRemind[i],
+        0,
+        0,
+        0,
+      );
+      if (triggerDate > now) {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `${eventId}-notime-${i}`,
+          content: {
+            ...baseConfig,
+            title: `📅 Today's Task`,
+            body: `You have the task "${taskName}" assigned for today please check on it`,
+          },
+          trigger: { date: triggerDate, channelId: "default" } as any,
+        });
+      }
+    }
   }
 }
 
@@ -159,15 +218,86 @@ export default function TasksScreen() {
   const [selectedDateFilter, setSelectedDateFilter] = useState("all");
   const [tasks, setTasks] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
+  const [timetable, setTimetable] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [isOffline, setIsOffline] = useState(false); // GLOBAL OFFLINE STATE
+  const [isOffline, setIsOffline] = useState(false);
+  const [syncQueue, setSyncQueue] = useState<any[]>([]);
 
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [toast, setToast] = useState({
+    visible: false,
+    msg: "",
+    type: "success",
+  });
+  const [confirmDialog, setConfirmDialog] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [expandedTasks, setExpandedTasks] = useState<{
     [key: string]: boolean;
   }>({});
+
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [isEditingTask, setIsEditingTask] = useState(false);
   const [statusSheetTask, setStatusSheetTask] = useState<any>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  // --- NEW: SMART COURSE ICON RENDERER ---
+  const renderCourseIcon = (
+    courseName: string,
+    size = 16,
+    color = theme.subtext,
+  ) => {
+    if (!courseName || courseName === "General")
+      return <Ionicons name="book" size={size} color={color} />;
+    if (courseName === "Event")
+      return <Ionicons name="calendar" size={size} color={theme.danger} />;
+
+    const isUni = courses.some(
+      (c: any) =>
+        (c.type === "university" || c.type === "uni") && c.name === courseName,
+    );
+    if (isUni)
+      return (
+        <UCPLogo
+          width={size}
+          height={size}
+          color={
+            color === theme.subtext && theme === Colors.dark
+              ? "#A3A3A3"
+              : theme.text
+          }
+        />
+      );
+
+    return <Ionicons name="book" size={size} color={color} />;
+  };
+
+  const showToast = (
+    msg: string,
+    type: "success" | "error" | "info" = "success",
+  ) => {
+    setToast({ visible: true, msg, type });
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+    setTimeout(() => {
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => setToast({ visible: false, msg: "", type: "info" }));
+    }, 3000);
+  };
 
   const dateFilters = useMemo(() => {
     const filters: { id: string; label: string; dateVal: string | null }[] = [
@@ -179,7 +309,6 @@ export default function TasksScreen() {
       label: "Today",
       dateVal: getLocalYYYYMMDD(today),
     });
-
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     filters.push({
@@ -187,7 +316,6 @@ export default function TasksScreen() {
       label: "Tomorrow",
       dateVal: getLocalYYYYMMDD(tomorrow),
     });
-
     for (let i = 2; i <= 6; i++) {
       const futureDate = new Date(today);
       futureDate.setDate(futureDate.getDate() + i);
@@ -202,145 +330,256 @@ export default function TasksScreen() {
   }, []);
 
   const syncTaskNotifications = async (tasksList: any[]) => {
-    const generalNotifs = await AsyncStorage.getItem("generalNotifs");
-    if (generalNotifs !== "true") return;
+    try {
+      const generalNotifs = await AsyncStorage.getItem("generalNotifs");
+      if (generalNotifs !== "true") return;
 
-    const active = tasksList.filter((t) => !t.completed && t.date && t.time);
-    for (const task of active) {
-      try {
-        const exactDate = new Date(`${task.date}T${task.time}:00`);
-        if (!isNaN(exactDate.getTime()) && exactDate > new Date()) {
-          await scheduleSmartAlert(
-            task.name,
-            `Your task starts in 15 minutes. Acknowledge to mute final alarm.`,
-            exactDate,
-            `task-${task._id}`,
-            "task",
-          );
-        }
-      } catch (e) {}
+      const active = tasksList.filter((t) => !t.completed && t.date);
+
+      for (const task of active) {
+        await scheduleTaskAlerts(
+          task.name,
+          task.date,
+          task.time,
+          `task-${task._id}`,
+        );
+      }
+    } catch (e) {
+      console.log("Error scheduling task notification", e);
     }
   };
 
-  const fetchData = async () => {
+  const loadDataAndSync = async () => {
     try {
-      const [cTasks, cCourses] = await Promise.all([
+      const [cTasks, cCourses, cTimetable, cQueue] = await Promise.all([
         AsyncStorage.getItem("off_tasks_data"),
         AsyncStorage.getItem("off_tasks_courses"),
+        AsyncStorage.getItem("off_timetable_data"),
+        AsyncStorage.getItem("tasks_sync_queue"),
       ]);
-      if (cTasks) setTasks(JSON.parse(cTasks));
+      let currentQueue = cQueue ? JSON.parse(cQueue) : [];
+      setSyncQueue(currentQueue);
+
+      const offlineAdds = currentQueue
+        .filter((q: any) => q.type === "ADD" && q.endpoint === "/tasks")
+        .map((q: any) => ({
+          ...q.payload,
+          _id: q.id,
+          isUnsynced: true,
+          createdAt: new Date().toISOString(),
+        }));
+
+      if (cTasks) {
+        const mergedCache = [...JSON.parse(cTasks), ...offlineAdds];
+        setTasks(mergedCache);
+        syncTaskNotifications(mergedCache);
+      }
+
       if (cCourses) setCourses(JSON.parse(cCourses));
+      if (cTimetable) setTimetable(JSON.parse(cTimetable));
       if (cTasks || cCourses) setIsLoading(false);
 
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
       if (!BACKEND_URL || !token) return setIsLoading(false);
 
-      // AGGRESSIVE CACHE BUSTING HEADERS
-      const config = {
-        headers: {
-          "x-auth-token": token,
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          Pragma: "no-cache",
-          Expires: "0",
-        },
-        timeout: 5000,
-      };
+      if (currentQueue.length > 0) {
+        currentQueue = await flushQueue(currentQueue, token, BACKEND_URL);
+      }
 
-      const timestamp = Date.now();
-      const results = await Promise.allSettled([
-        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
+      const config = { headers: { "x-auth-token": token }, timeout: 5000 };
+      const [taskRes, courseRes, ttRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/tasks`, config),
+        axios.get(`${BACKEND_URL}/courses`, config),
+        axios.get(`${BACKEND_URL}/timetable`, config),
       ]);
 
-      // DETECT OFFLINE MODE
-      const isAnyRejected = results.some((r) => r.status === "rejected");
-      setIsOffline(isAnyRejected);
+      setIsOffline(false);
+      const remainingOfflineAdds = currentQueue
+        .filter((q: any) => q.type === "ADD" && q.endpoint === "/tasks")
+        .map((q: any) => ({ ...q.payload, _id: q.id, isUnsynced: true }));
 
-      if (results[0].status === "fulfilled") {
-        const freshTasks = Array.isArray(results[0].value.data)
-          ? results[0].value.data
-          : [];
-        setTasks(freshTasks);
-        AsyncStorage.setItem("off_tasks_data", JSON.stringify(freshTasks));
-        syncTaskNotifications(freshTasks);
-      }
+      const mergedFresh = [...taskRes.data, ...remainingOfflineAdds];
+      setTasks(mergedFresh);
+      syncTaskNotifications(mergedFresh);
 
-      if (results[1].status === "fulfilled") {
-        const freshCourses = Array.isArray(results[1].value.data)
-          ? results[1].value.data
-          : [];
-        setCourses(freshCourses);
-        AsyncStorage.setItem("off_tasks_courses", JSON.stringify(freshCourses));
-      }
+      setCourses(courseRes.data);
+      setTimetable(ttRes.data);
+      AsyncStorage.setItem("off_tasks_data", JSON.stringify(taskRes.data));
+      AsyncStorage.setItem("off_tasks_courses", JSON.stringify(courseRes.data));
+      AsyncStorage.setItem("off_timetable_data", JSON.stringify(ttRes.data));
     } catch (error) {
       setIsOffline(true);
-      console.log("Offline mode active.");
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
   };
 
+  const flushQueue = async (queue: any[], token: string, baseUrl: string) => {
+    let remainingQueue = [...queue];
+    for (const action of queue) {
+      try {
+        if (action.type === "DELETE") {
+          await axios.put(
+            `${baseUrl}/tasks/${action.taskId}/delete`,
+            {},
+            { headers: { "x-auth-token": token } },
+          );
+        } else if (action.type === "UPDATE") {
+          await axios.put(`${baseUrl}/tasks/${action.taskId}`, action.payload, {
+            headers: { "x-auth-token": token },
+          });
+        } else if (action.type === "ADD") {
+          await axios.post(`${baseUrl}${action.endpoint}`, action.payload, {
+            headers: { "x-auth-token": token },
+          });
+        }
+        remainingQueue = remainingQueue.filter((a) => a.id !== action.id);
+      } catch (error) {
+        break;
+      }
+    }
+    await AsyncStorage.setItem(
+      "tasks_sync_queue",
+      JSON.stringify(remainingQueue),
+    );
+    setSyncQueue(remainingQueue);
+    return remainingQueue;
+  };
+
+  const queueBulkActions = async (actions: any[]) => {
+    const existingQueue = await AsyncStorage.getItem("tasks_sync_queue");
+    const currentQueue = existingQueue ? JSON.parse(existingQueue) : [];
+    const newQueue = [...currentQueue, ...actions];
+    setSyncQueue(newQueue);
+    await AsyncStorage.setItem("tasks_sync_queue", JSON.stringify(newQueue));
+    if (!isOffline) loadDataAndSync();
+  };
+
+  const queueAction = async (
+    type: "UPDATE" | "DELETE",
+    taskId: string,
+    payload?: any,
+  ) => {
+    await queueBulkActions([
+      { id: Date.now().toString() + Math.random(), type, taskId, payload },
+    ]);
+  };
+
   useEffect(() => {
-    fetchData();
+    loadDataAndSync();
   }, []);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchData();
+    loadDataAndSync();
   };
 
-  const updateTaskInDB = async (taskId: string, updateData: any) => {
-    const updated = tasks.map((t) =>
-      t._id === taskId ? { ...t, ...updateData } : t,
+  const updateTaskLocally = (taskId: string, updateData: any) => {
+    if (taskId.toString().includes(".")) return;
+    const updatedTasks = tasks.map((t) =>
+      t._id === taskId ? { ...t, ...updateData, isUnsynced: true } : t,
     );
-    setTasks(updated);
-    AsyncStorage.setItem("off_tasks_data", JSON.stringify(updated));
-    try {
-      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-      const token = await AsyncStorage.getItem("userToken");
-      await axios.put(`${BACKEND_URL}/tasks/${taskId}`, updateData, {
-        headers: { "x-auth-token": token },
-      });
-    } catch (error) {
-      Alert.alert("Sync Error", "Failed to update task. Restoring data.");
-      fetchData();
+    setTasks(updatedTasks);
+    AsyncStorage.setItem(
+      "off_tasks_data",
+      JSON.stringify(updatedTasks.filter((t) => !t.isUnsynced)),
+    );
+    queueAction("UPDATE", taskId, updateData);
+
+    if (updateData.status === "Completed" || updateData.completed === true) {
+      (async () => {
+        const scheduled =
+          await Notifications.getAllScheduledNotificationsAsync();
+        for (const notif of scheduled) {
+          if (notif.identifier.startsWith(`task-${taskId}`)) {
+            await Notifications.cancelScheduledNotificationAsync(
+              notif.identifier,
+            );
+          }
+        }
+      })();
     }
   };
 
   const handleStatusChange = (taskId: string, newStatus: string) => {
-    updateTaskInDB(taskId, {
+    updateTaskLocally(taskId, {
       status: newStatus,
       completed: newStatus === "Completed",
     });
     setStatusSheetTask(null);
   };
 
-  const toggleSubtask = (taskId: string, subtaskIndex: number) => {
-    const task = tasks.find((t) => t._id === taskId);
-    if (!task) return;
-    const updatedSubTasks = JSON.parse(JSON.stringify(task.subTasks));
-    updatedSubTasks[subtaskIndex].completed =
-      !updatedSubTasks[subtaskIndex].completed;
-    updateTaskInDB(taskId, { subTasks: updatedSubTasks });
-    if (selectedTask && selectedTask._id === taskId)
-      setSelectedTask({ ...selectedTask, subTasks: updatedSubTasks });
+  const toggleSelection = (taskId: string) => {
+    setSelectedTaskIds((prev) =>
+      prev.includes(taskId)
+        ? prev.filter((id) => id !== taskId)
+        : [...prev, taskId],
+    );
   };
 
-  const toggleExpand = (taskId: string) =>
-    setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  const deleteSelectedTasks = () => {
+    setConfirmDialog({
+      visible: true,
+      title: "Delete Tasks",
+      message: `Move ${selectedTaskIds.length} selected tasks to the bin?`,
+      onConfirm: async () => {
+        const remainingTasks = tasks.filter(
+          (t) => !selectedTaskIds.includes(t._id),
+        );
+        setTasks(remainingTasks);
+        AsyncStorage.setItem("off_tasks_data", JSON.stringify(remainingTasks));
+        const deleteActions = selectedTaskIds.map((id) => ({
+          id: Date.now().toString() + Math.random(),
+          type: "DELETE",
+          taskId: id,
+        }));
+        await queueBulkActions(deleteActions);
 
-  const getCourseIcon = (courseName: string) => {
-    if (courseName === "Event")
-      return <Ionicons name="calendar" size={14} color="#F43F5E" />;
-    const matchedCourse = courses.find((c) => c.name === courseName);
+        const scheduled =
+          await Notifications.getAllScheduledNotificationsAsync();
+        for (const id of selectedTaskIds) {
+          for (const notif of scheduled) {
+            if (notif.identifier.startsWith(`task-${id}`)) {
+              await Notifications.cancelScheduledNotificationAsync(
+                notif.identifier,
+              );
+            }
+          }
+        }
+
+        setIsSelectionMode(false);
+        setSelectedTaskIds([]);
+        setConfirmDialog(null);
+        showToast(`${deleteActions.length} tasks moved to Bin`, "success");
+      },
+    });
+  };
+
+  const getClassesForDate = (dateString: string, courseName: string) => {
     if (
-      matchedCourse &&
-      (matchedCourse.type === "university" || matchedCourse.type === "uni")
+      !dateString ||
+      !timetable.length ||
+      !courseName ||
+      courseName === "General"
     )
-      return <UCPLogo width={14} height={14} color={theme.text} />;
-    return <Ionicons name="book" size={14} color={theme.subtext} />;
+      return [];
+    const days = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+    const targetDay = days[new Date(dateString).getDay()];
+    return timetable.filter(
+      (t) =>
+        t.day === targetDay &&
+        (t.courseName === courseName || t.name === courseName),
+    );
   };
 
   const activeTasks = tasks
@@ -350,6 +589,7 @@ export default function TasksScreen() {
         new Date(a.date || "9999-12-31").getTime() -
         new Date(b.date || "9999-12-31").getTime(),
     );
+
   const completedTasks = tasks
     .filter((t) => t.completed)
     .sort(
@@ -357,6 +597,7 @@ export default function TasksScreen() {
         new Date(b.updatedAt || b.createdAt).getTime() -
         new Date(a.updatedAt || a.createdAt).getTime(),
     );
+
   let displayedTasks = activeTab === "active" ? activeTasks : completedTasks;
 
   if (selectedDateFilter !== "all") {
@@ -381,190 +622,203 @@ export default function TasksScreen() {
   const renderTask = (task: any) => {
     const priority = getPriorityConfig(task.priority);
     const status = getStatusConfig(task.status);
-    const subTasksTotal = task.subTasks?.length || 0;
-    const subTasksDone =
-      task.subTasks?.filter((s: any) => s.completed).length || 0;
-    const isExpanded = expandedTasks[task._id];
+    const isSelected = selectedTaskIds.includes(task._id);
 
     return (
-      <View
+      <TouchableOpacity
         key={task._id}
+        activeOpacity={0.7}
+        onLongPress={() => {
+          setIsSelectionMode(true);
+          toggleSelection(task._id);
+        }}
+        onPress={() => {
+          if (isSelectionMode) {
+            toggleSelection(task._id);
+          } else {
+            setSelectedTask(task);
+            setIsEditingTask(false);
+          }
+        }}
         style={[
           styles.taskCard,
           task.status === "Completed" && styles.taskCardCompleted,
+          isSelected && {
+            borderColor: theme.brand,
+            backgroundColor: theme.brand + "10",
+          },
         ]}
       >
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => setSelectedTask(task)}
-        >
-          <View style={styles.taskHeader}>
-            <View style={styles.titleContainer}>
-              <Text
-                style={[
-                  styles.taskTitle,
-                  task.status === "Completed" && styles.taskTitleCompleted,
-                ]}
-                numberOfLines={2}
-              >
-                {task.name}
-              </Text>
-            </View>
+        <View style={styles.taskHeader}>
+          {isSelectionMode && (
+            <Ionicons
+              name={isSelected ? "checkbox" : "square-outline"}
+              size={24}
+              color={isSelected ? theme.brand : theme.subtext}
+              style={{ marginRight: 12 }}
+            />
+          )}
+          <View style={styles.titleContainer}>
+            <Text
+              style={[
+                styles.taskTitle,
+                task.status === "Completed" && styles.taskTitleCompleted,
+              ]}
+              numberOfLines={2}
+            >
+              {task.name}
+            </Text>
+          </View>
+          <View style={{ alignItems: "flex-end", gap: 6 }}>
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => setStatusSheetTask(task)}
+              onPress={() => !isSelectionMode && setStatusSheetTask(task)}
               style={styles.statusBadge}
             >
               <Ionicons
                 name={status.icon as any}
-                size={14}
+                size={12}
                 color={status.color}
               />
               <Text style={[styles.statusText, { color: status.color }]}>
                 {status.label}
               </Text>
             </TouchableOpacity>
-          </View>
-          <View style={styles.metaContainer}>
-            <View style={styles.metaPill}>
-              {getCourseIcon(task.course)}
-              <Text style={styles.metaText} numberOfLines={1}>
-                {task.course || "General"}
-              </Text>
-            </View>
-            {(task.date || task.time) && (
-              <View style={styles.metaPill}>
-                <Ionicons
-                  name="calendar-outline"
-                  size={14}
-                  color={theme.subtext}
-                />
-                <Text style={styles.metaText}>
-                  {formatDate(task.date)} {task.time ? `• ${task.time}` : ""}
+            {task.isUnsynced && (
+              <View style={styles.unsyncedBadge}>
+                <Ionicons name="cloud-offline" size={10} color={theme.danger} />
+                <Text
+                  style={{
+                    fontSize: 8,
+                    color: theme.danger,
+                    fontWeight: "bold",
+                  }}
+                >
+                  UNSYNCED
                 </Text>
               </View>
             )}
-            <View
-              style={[
-                styles.metaPill,
-                { borderColor: priority.bg, backgroundColor: "transparent" },
-              ]}
-            >
-              {priority.isDouble ? (
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Ionicons
-                    name="chevron-up"
-                    size={12}
-                    color={priority.color}
-                    style={{ marginRight: -6 }}
-                  />
-                  <Ionicons
-                    name="chevron-up"
-                    size={12}
-                    color={priority.color}
-                  />
-                </View>
-              ) : (
-                <Ionicons
-                  name={
-                    task.priority === "High"
-                      ? "chevron-up"
-                      : task.priority === "Low"
-                        ? "arrow-down"
-                        : "remove"
-                  }
-                  size={12}
-                  color={priority.color}
-                />
-              )}
-              <Text
-                style={[
-                  styles.metaText,
-                  { color: priority.color, fontWeight: "800" },
-                ]}
-              >
-                {task.priority}
+          </View>
+        </View>
+
+        <View style={styles.metaContainer}>
+          <View style={styles.metaPill}>
+            {/* DYNAMIC UCP ICON INJECTED HERE */}
+            {renderCourseIcon(task.course, 12, theme.subtext)}
+            <Text style={styles.metaText} numberOfLines={1}>
+              {task.course || "General"}
+            </Text>
+          </View>
+          {(task.date || task.time) && (
+            <View style={styles.metaPill}>
+              <Ionicons
+                name="calendar-outline"
+                size={12}
+                color={theme.subtext}
+              />
+              <Text style={styles.metaText}>
+                {formatDate(task.date)} {task.time ? `• ${task.time}` : ""}
               </Text>
             </View>
-            {subTasksTotal > 0 && (
-              <TouchableOpacity
-                activeOpacity={0.6}
-                onPress={() => toggleExpand(task._id)}
-                style={[
-                  styles.metaPill,
-                  {
-                    backgroundColor: isExpanded
-                      ? theme.invertedBg
-                      : theme.background,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="list"
-                  size={14}
-                  color={isExpanded ? theme.invertedText : theme.subtext}
-                />
-                <Text
-                  style={[
-                    styles.metaText,
-                    isExpanded && { color: theme.invertedText },
-                  ]}
-                >
-                  {subTasksDone}/{subTasksTotal}
-                </Text>
-                <Ionicons
-                  name={isExpanded ? "chevron-up" : "chevron-down"}
-                  size={12}
-                  color={isExpanded ? theme.invertedText : theme.subtext}
-                />
-              </TouchableOpacity>
-            )}
-          </View>
-        </TouchableOpacity>
-        {isExpanded && subTasksTotal > 0 && (
-          <View style={styles.subtasksContainer}>
-            {task.subTasks.map((sub: any, index: number) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.subtaskRow}
-                activeOpacity={0.7}
-                onPress={() => toggleSubtask(task._id, index)}
-              >
-                <Ionicons
-                  name={sub.completed ? "checkbox" : "square-outline"}
-                  size={20}
-                  color={sub.completed ? "#22C55E" : theme.subtext}
-                />
-                <Text
-                  style={[
-                    styles.subtaskText,
-                    sub.completed && styles.subtaskTextCompleted,
-                  ]}
-                >
-                  {sub.text}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </View>
+          )}
+        </View>
+      </TouchableOpacity>
     );
   };
 
+  const isHeaderActive = isSelectionMode || isOffline || syncQueue.length > 0;
+
   return (
-    <View style={[styles.container, { paddingTop: statusBarHeight }]}>
-      {/* HEADER WITH OFFLINE PILL */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Tasks</Text>
-        {isOffline && (
-          <View style={styles.offlinePill}>
-            <Ionicons name="cloud-offline" size={12} color="#EF4444" />
-            <Text style={styles.offlineText}>Offline Mode</Text>
+    <View style={styles.container}>
+      {toast.visible && (
+        <Animated.View
+          style={[
+            styles.toastContainer,
+            {
+              opacity: fadeAnim,
+              backgroundColor:
+                toast.type === "error"
+                  ? theme.danger
+                  : toast.type === "info"
+                    ? theme.brand
+                    : theme.success,
+            },
+          ]}
+        >
+          <Ionicons
+            name={
+              toast.type === "success"
+                ? "checkmark-circle"
+                : toast.type === "error"
+                  ? "alert-circle"
+                  : "information-circle"
+            }
+            size={20}
+            color="#FFF"
+          />
+          <Text style={styles.toastText}>{toast.msg}</Text>
+        </Animated.View>
+      )}
+
+      <Modal visible={!!confirmDialog} transparent animationType="fade">
+        <View style={styles.modalOverlayCenter}>
+          <View style={styles.confirmDialog}>
+            <Text style={styles.confirmTitle}>{confirmDialog?.title}</Text>
+            <Text style={styles.confirmMessage}>{confirmDialog?.message}</Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                onPress={() => setConfirmDialog(null)}
+                style={styles.confirmCancelBtn}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={confirmDialog?.onConfirm}
+                style={styles.confirmDeleteBtn}
+              >
+                <Text style={styles.confirmDeleteText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        )}
+        </View>
+      </Modal>
+
+      {/* --- COLLAPSIBLE HEADER (FIXES BLANK SPACE) --- */}
+      <View style={[styles.header, !isHeaderActive && { display: "none" }]}>
+        <Text style={styles.headerTitle}>
+          {isSelectionMode ? `${selectedTaskIds.length} Selected` : ""}
+        </Text>
+
+        <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+          {isSelectionMode ? (
+            <TouchableOpacity
+              onPress={() => {
+                setIsSelectionMode(false);
+                setSelectedTaskIds([]);
+              }}
+            >
+              <Text
+                style={{ color: theme.brand, fontWeight: "bold", fontSize: 16 }}
+              >
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          ) : isOffline ? (
+            <View style={styles.offlinePill}>
+              <Ionicons name="cloud-offline" size={12} color={theme.danger} />
+              <Text
+                style={{ color: theme.danger, fontSize: 11, fontWeight: "800" }}
+              >
+                Offline Mode
+              </Text>
+            </View>
+          ) : syncQueue.length > 0 ? (
+            <ActivityIndicator size="small" color={theme.brand} />
+          ) : null}
+        </View>
       </View>
 
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, !isHeaderActive && { marginTop: 15 }]}>
         <TouchableOpacity
           style={[styles.tab, activeTab === "active" && styles.activeTab]}
           onPress={() => setActiveTab("active")}
@@ -592,71 +846,60 @@ export default function TasksScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
       <View>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.dateFilterContainer}
         >
-          {dateFilters.map((filter) => {
-            const isActive = selectedDateFilter === filter.id;
-            return (
-              <TouchableOpacity
-                key={filter.id}
-                activeOpacity={0.7}
-                onPress={() => setSelectedDateFilter(filter.id)}
-                style={[styles.datePill, isActive && styles.activeDatePill]}
+          {dateFilters.map((filter) => (
+            <TouchableOpacity
+              key={filter.id}
+              onPress={() => setSelectedDateFilter(filter.id)}
+              style={[
+                styles.datePill,
+                selectedDateFilter === filter.id && styles.activeDatePill,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.datePillText,
+                  selectedDateFilter === filter.id && styles.activeDatePillText,
+                ]}
               >
-                <Text
-                  style={[
-                    styles.datePillText,
-                    isActive && styles.activeDatePillText,
-                  ]}
-                >
-                  {filter.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </ScrollView>
       </View>
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.text} />
+
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.text}
+          />
+        }
+      >
+        {displayedTasks.map(renderTask)}
+      </ScrollView>
+
+      {isSelectionMode && selectedTaskIds.length > 0 && (
+        <View style={styles.selectionBar}>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={deleteSelectedTasks}
+          >
+            <Ionicons name="trash" size={20} color="#FFF" />
+            <Text style={{ color: "#FFF", fontWeight: "bold", fontSize: 16 }}>
+              Delete Selected
+            </Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={theme.text}
-            />
-          }
-        >
-          {displayedTasks.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Ionicons
-                name={
-                  activeTab === "active"
-                    ? "checkmark-done-circle-outline"
-                    : "file-tray-outline"
-                }
-                size={64}
-                color={theme.border}
-              />
-              <Text style={styles.emptyText}>
-                {selectedDateFilter !== "all"
-                  ? "Nothing scheduled here!"
-                  : "You're all caught up!"}
-              </Text>
-            </View>
-          ) : (
-            displayedTasks.map(renderTask)
-          )}
-        </ScrollView>
       )}
 
       <Modal visible={!!statusSheetTask} transparent animationType="fade">
@@ -668,14 +911,10 @@ export default function TasksScreen() {
                 {["New task", "Scheduled", "In Progress", "Completed"].map(
                   (status) => {
                     const sConf = getStatusConfig(status);
-                    const isCurrent = statusSheetTask?.status === status;
                     return (
                       <TouchableOpacity
                         key={status}
-                        style={[
-                          styles.sheetRow,
-                          isCurrent && { backgroundColor: theme.background },
-                        ]}
+                        style={styles.sheetRow}
                         onPress={() =>
                           handleStatusChange(statusSheetTask._id, status)
                         }
@@ -685,22 +924,7 @@ export default function TasksScreen() {
                           size={20}
                           color={sConf.color}
                         />
-                        <Text
-                          style={[
-                            styles.sheetText,
-                            isCurrent && { fontWeight: "bold" },
-                          ]}
-                        >
-                          {status}
-                        </Text>
-                        {isCurrent && (
-                          <Ionicons
-                            name="checkmark"
-                            size={20}
-                            color={theme.text}
-                            style={{ marginLeft: "auto" }}
-                          />
-                        )}
+                        <Text style={styles.sheetText}>{status}</Text>
                       </TouchableOpacity>
                     );
                   },
@@ -715,113 +939,317 @@ export default function TasksScreen() {
         <View style={styles.fullModalOverlay}>
           <View style={styles.fullModalContent}>
             <View style={styles.fullModalHeader}>
-              <View style={styles.headerIconBg}>
-                <Ionicons name="information-circle" size={24} color="#3B82F6" />
-              </View>
-              <Text style={styles.fullModalTitle}>Task Details</Text>
-              <TouchableOpacity
-                onPress={() => setSelectedTask(null)}
-                style={styles.closeBtn}
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 12,
+                  flex: 1,
+                }}
               >
-                <Ionicons name="close" size={24} color={theme.subtext} />
-              </TouchableOpacity>
+                <View style={styles.headerIconBg}>
+                  <Ionicons
+                    name={isEditingTask ? "create" : "document-text"}
+                    size={24}
+                    color={theme.brand}
+                  />
+                </View>
+                <Text style={styles.fullModalTitle}>
+                  {isEditingTask ? "Edit Task" : "Task Summary"}
+                </Text>
+              </View>
+
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
+              >
+                {isEditingTask ? (
+                  <TouchableOpacity
+                    onPress={() => setIsEditingTask(false)}
+                    style={styles.doneBtn}
+                  >
+                    <Text style={styles.doneBtnText}>Done</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => setIsEditingTask(true)}
+                    style={styles.editIconBtn}
+                  >
+                    <Ionicons
+                      name="create-outline"
+                      size={22}
+                      color={theme.text}
+                    />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedTask(null);
+                    setIsEditingTask(false);
+                  }}
+                  style={styles.closeBtn}
+                >
+                  <Ionicons name="close" size={24} color={theme.subtext} />
+                </TouchableOpacity>
+              </View>
             </View>
+
             <ScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ padding: 24 }}
             >
-              <Text style={styles.summaryTitle}>{selectedTask?.name}</Text>
-              <View style={styles.summaryDescBox}>
-                <Ionicons
-                  name="menu"
-                  size={18}
-                  color={theme.subtext}
-                  style={{ marginTop: 2 }}
-                />
-                <Text style={styles.summaryDescText}>
-                  {selectedTask?.description ||
-                    "No additional notes provided for this task."}
-                </Text>
-              </View>
-              <View style={styles.summaryGrid}>
-                <View style={styles.summaryGridItem}>
-                  <Text style={styles.gridLabel}>Course</Text>
+              {!isEditingTask ? (
+                <View>
+                  <Text style={styles.summaryTitle}>{selectedTask?.name}</Text>
+                  <View style={styles.summaryDescBox}>
+                    <Ionicons
+                      name="menu"
+                      size={18}
+                      color={theme.subtext}
+                      style={{ marginTop: 2 }}
+                    />
+                    <Text style={styles.summaryDescText}>
+                      {selectedTask?.description ||
+                        "No additional notes provided."}
+                    </Text>
+                  </View>
+
+                  <View style={styles.summaryGrid}>
+                    <View style={styles.summaryGridItem}>
+                      <Text style={styles.gridLabel}>Course</Text>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          marginTop: 4,
+                        }}
+                      >
+                        {/* DYNAMIC UCP ICON INJECTED HERE */}
+                        {renderCourseIcon(
+                          selectedTask?.course,
+                          14,
+                          theme.subtext,
+                        )}
+                        <Text style={styles.gridValue}>
+                          {selectedTask?.course || "General"}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.summaryGridItem}>
+                      <Text style={styles.gridLabel}>Date & Time</Text>
+                      <Text style={styles.gridValue}>
+                        {formatDate(selectedTask?.date)}{" "}
+                        {selectedTask?.time ? `• ${selectedTask?.time}` : ""}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryGridItem}>
+                      <Text style={styles.gridLabel}>Priority</Text>
+                      <Text
+                        style={[
+                          styles.gridValue,
+                          {
+                            color: getPriorityConfig(selectedTask?.priority)
+                              .color,
+                          },
+                        ]}
+                      >
+                        {selectedTask?.priority}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryGridItem}>
+                      <Text style={styles.gridLabel}>Status</Text>
+                      <Text
+                        style={[
+                          styles.gridValue,
+                          {
+                            color: getStatusConfig(selectedTask?.status).color,
+                          },
+                        ]}
+                      >
+                        {selectedTask?.status}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View>
+                  <Text style={styles.gridLabel}>Task Title</Text>
+                  <TextInput
+                    style={styles.editTitleInput}
+                    value={selectedTask?.name}
+                    onChangeText={(t) =>
+                      setSelectedTask({ ...selectedTask, name: t })
+                    }
+                    onBlur={() =>
+                      updateTaskLocally(selectedTask._id, {
+                        name: selectedTask.name,
+                      })
+                    }
+                    multiline
+                  />
+                  <Text style={styles.gridLabel}>Description</Text>
+                  <TextInput
+                    style={styles.editDescInput}
+                    value={selectedTask?.description}
+                    placeholder="Add notes..."
+                    placeholderTextColor={theme.subtext}
+                    onChangeText={(t) =>
+                      setSelectedTask({ ...selectedTask, description: t })
+                    }
+                    onBlur={() =>
+                      updateTaskLocally(selectedTask._id, {
+                        description: selectedTask.description,
+                      })
+                    }
+                    multiline
+                  />
+                  <Text style={styles.gridLabel}>Priority</Text>
+                  <View style={styles.priorityRow}>
+                    {["Low", "Medium", "High", "Critical"].map((p) => (
+                      <TouchableOpacity
+                        key={p}
+                        style={[
+                          styles.chipBtn,
+                          selectedTask?.priority === p && {
+                            borderColor: theme.brand,
+                            backgroundColor: theme.brand + "15",
+                          },
+                        ]}
+                        onPress={() => {
+                          setSelectedTask({ ...selectedTask, priority: p });
+                          updateTaskLocally(selectedTask._id, { priority: p });
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selectedTask?.priority === p && {
+                              color: theme.brand,
+                            },
+                          ]}
+                        >
+                          {p}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   <View
                     style={{
                       flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                      marginTop: 4,
+                      gap: 10,
+                      marginTop: 10,
+                      marginBottom: 20,
                     }}
                   >
-                    {getCourseIcon(selectedTask?.course)}
-                    <Text style={styles.gridValue}>
-                      {selectedTask?.course || "General"}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.summaryGridItem}>
-                  <Text style={styles.gridLabel}>Due Date</Text>
-                  <Text style={styles.gridValue}>
-                    {formatDate(selectedTask?.date)}
-                  </Text>
-                </View>
-                <View style={styles.summaryGridItem}>
-                  <Text style={styles.gridLabel}>Priority</Text>
-                  <Text
-                    style={[
-                      styles.gridValue,
-                      {
-                        color: getPriorityConfig(selectedTask?.priority).color,
-                      },
-                    ]}
-                  >
-                    {selectedTask?.priority}
-                  </Text>
-                </View>
-                <View style={styles.summaryGridItem}>
-                  <Text style={styles.gridLabel}>Status</Text>
-                  <Text
-                    style={[
-                      styles.gridValue,
-                      { color: getStatusConfig(selectedTask?.status).color },
-                    ]}
-                  >
-                    {selectedTask?.status}
-                  </Text>
-                </View>
-              </View>
-              {selectedTask?.subTasks?.length > 0 && (
-                <View style={styles.modalSubtaskBox}>
-                  <Text style={styles.modalSubtaskHeader}>SUB TASKS</Text>
-                  {selectedTask.subTasks.map((sub: any, index: number) => (
                     <TouchableOpacity
-                      key={index}
-                      style={styles.subtaskRow}
-                      activeOpacity={0.7}
-                      onPress={() => toggleSubtask(selectedTask._id, index)}
+                      style={styles.editBtn}
+                      onPress={() => setShowDatePicker(true)}
                     >
-                      <Ionicons
-                        name={sub.completed ? "checkbox" : "square-outline"}
-                        size={22}
-                        color={sub.completed ? "#22C55E" : theme.subtext}
-                      />
-                      <Text
-                        style={[
-                          styles.subtaskText,
-                          sub.completed && styles.subtaskTextCompleted,
-                          { fontSize: 14 },
-                        ]}
-                      >
-                        {sub.text}
+                      <Ionicons name="calendar" size={16} color={theme.brand} />
+                      <Text style={{ color: theme.brand, fontWeight: "bold" }}>
+                        {selectedTask?.date
+                          ? formatDate(selectedTask.date)
+                          : "Set Date"}
                       </Text>
                     </TouchableOpacity>
-                  ))}
+                    <TouchableOpacity
+                      style={styles.editBtn}
+                      onPress={() => setShowTimePicker(true)}
+                    >
+                      <Ionicons name="time" size={16} color={theme.brand} />
+                      <Text style={{ color: theme.brand, fontWeight: "bold" }}>
+                        {selectedTask?.time || "Set Time"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {selectedTask?.date &&
+                    getClassesForDate(selectedTask.date, selectedTask.course)
+                      .length > 0 && (
+                      <View style={{ marginBottom: 24 }}>
+                        <Text
+                          style={[
+                            styles.gridLabel,
+                            { marginBottom: 8, color: theme.brand },
+                          ]}
+                        >
+                          ✨ Link to a class on this day?
+                        </Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                        >
+                          {getClassesForDate(
+                            selectedTask.date,
+                            selectedTask.course,
+                          ).map((cls: any, idx: number) => (
+                            <TouchableOpacity
+                              key={idx}
+                              style={styles.suggestionPill}
+                              onPress={() => {
+                                const updated = {
+                                  ...selectedTask,
+                                  course: cls.courseName,
+                                  time: cls.startTime,
+                                };
+                                setSelectedTask(updated);
+                                updateTaskLocally(selectedTask._id, {
+                                  course: cls.courseName,
+                                  time: cls.startTime,
+                                });
+                                showToast("Class Linked!", "info");
+                              }}
+                            >
+                              <Text style={styles.suggestionTitle}>
+                                {cls.courseName}
+                              </Text>
+                              <Text style={styles.suggestionTime}>
+                                {cls.startTime} - {cls.room}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    )}
                 </View>
               )}
             </ScrollView>
           </View>
         </View>
+
+        {showDatePicker && (
+          <DateTimePicker
+            value={
+              selectedTask?.date ? new Date(selectedTask.date) : new Date()
+            }
+            mode="date"
+            onChange={(e, d) => {
+              setShowDatePicker(Platform.OS === "ios");
+              if (d) {
+                const strDate = getLocalYYYYMMDD(d);
+                setSelectedTask({ ...selectedTask, date: strDate });
+                updateTaskLocally(selectedTask._id, { date: strDate });
+              }
+            }}
+          />
+        )}
+        {showTimePicker && (
+          <DateTimePicker
+            value={new Date()}
+            mode="time"
+            onChange={(e, t) => {
+              setShowTimePicker(Platform.OS === "ios");
+              if (t) {
+                const strTime = t.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                setSelectedTask({ ...selectedTask, time: strTime });
+                updateTaskLocally(selectedTask._id, { time: strTime });
+              }
+            }}
+          />
+        )}
       </Modal>
     </View>
   );
@@ -847,12 +1275,11 @@ const getStyles = (theme: any) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 6,
-      backgroundColor: "rgba(239, 68, 68, 0.1)",
+      backgroundColor: theme.danger + "20",
       paddingHorizontal: 10,
       paddingVertical: 6,
       borderRadius: 12,
     },
-    offlineText: { color: "#EF4444", fontSize: 11, fontWeight: "800" },
     tabContainer: {
       flexDirection: "row",
       backgroundColor: theme.card,
@@ -895,29 +1322,11 @@ const getStyles = (theme: any) =>
     },
     datePillText: { fontSize: 13, fontWeight: "800", color: theme.text },
     activeDatePillText: { color: theme.invertedText },
-    scrollContent: { paddingHorizontal: 24, paddingBottom: 100, gap: 16 },
-    loadingContainer: {
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-    },
-    emptyContainer: {
-      alignItems: "center",
-      justifyContent: "center",
-      paddingVertical: 80,
-      opacity: 0.8,
-    },
-    emptyText: {
-      color: theme.text,
-      fontSize: 16,
-      fontWeight: "800",
-      marginTop: 20,
-      letterSpacing: -0.5,
-    },
+    scrollContent: { paddingHorizontal: 24, paddingBottom: 120, gap: 12 },
     taskCard: {
       backgroundColor: theme.card,
-      borderRadius: 20,
       padding: 18,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.border,
     },
@@ -926,7 +1335,7 @@ const getStyles = (theme: any) =>
       flexDirection: "row",
       alignItems: "flex-start",
       gap: 12,
-      marginBottom: 16,
+      marginBottom: 12,
     },
     titleContainer: { flex: 1 },
     taskTitle: {
@@ -957,6 +1366,15 @@ const getStyles = (theme: any) =>
       textTransform: "uppercase",
       letterSpacing: 0.5,
     },
+    unsyncedBadge: {
+      flexDirection: "row",
+      gap: 4,
+      alignItems: "center",
+      backgroundColor: theme.danger + "10",
+      paddingHorizontal: 6,
+      paddingVertical: 3,
+      borderRadius: 8,
+    },
     metaContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
     metaPill: {
       flexDirection: "row",
@@ -970,24 +1388,25 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
     },
     metaText: { fontSize: 11, fontWeight: "700", color: theme.subtext },
-    subtasksContainer: {
-      marginTop: 16,
-      paddingTop: 16,
-      borderTopWidth: 1,
-      borderTopColor: theme.border,
-      gap: 12,
+    selectionBar: {
+      position: "absolute",
+      bottom: 30,
+      left: 24,
+      right: 24,
+      backgroundColor: theme.danger,
+      borderRadius: 20,
+      elevation: 10,
+      shadowColor: theme.danger,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.4,
+      shadowRadius: 10,
     },
-    subtaskRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-    subtaskText: {
-      fontSize: 13,
-      color: theme.text,
-      flex: 1,
-      fontWeight: "500",
-    },
-    subtaskTextCompleted: {
-      textDecorationLine: "line-through",
-      color: theme.subtext,
-      fontStyle: "italic",
+    deleteButton: {
+      padding: 18,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 10,
     },
     modalOverlay: {
       flex: 1,
@@ -999,7 +1418,7 @@ const getStyles = (theme: any) =>
       borderTopLeftRadius: 24,
       borderTopRightRadius: 24,
       padding: 24,
-      paddingBottom: Platform.OS === "ios" ? 40 : 24,
+      paddingBottom: 40,
     },
     sheetHeader: {
       fontSize: 18,
@@ -1051,13 +1470,22 @@ const getStyles = (theme: any) =>
       fontWeight: "800",
       color: theme.text,
       flex: 1,
-      marginLeft: 12,
     },
     closeBtn: {
       padding: 4,
       backgroundColor: theme.background,
       borderRadius: 20,
     },
+    editIconBtn: { padding: 8, borderRadius: 20 },
+    doneBtn: {
+      backgroundColor: theme.brand + "15",
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.brand + "40",
+    },
+    doneBtnText: { color: theme.brand, fontWeight: "800", fontSize: 13 },
     summaryTitle: {
       fontSize: 24,
       fontWeight: "800",
@@ -1081,32 +1509,146 @@ const getStyles = (theme: any) =>
       marginBottom: 24,
     },
     summaryGridItem: { width: "50%", marginBottom: 20 },
-    gridLabel: {
-      fontSize: 11,
-      fontWeight: "800",
-      color: theme.subtext,
-      textTransform: "uppercase",
-      letterSpacing: 1,
-    },
     gridValue: {
       fontSize: 14,
       fontWeight: "700",
       color: theme.text,
       marginTop: 4,
     },
-    modalSubtaskBox: {
+    editTitleInput: {
+      fontSize: 24,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -0.5,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      paddingBottom: 10,
+      marginBottom: 16,
+    },
+    editDescInput: {
+      fontSize: 15,
+      color: theme.text,
       backgroundColor: theme.background,
-      borderRadius: 16,
-      padding: 16,
+      padding: 14,
+      borderRadius: 12,
       borderWidth: 1,
       borderColor: theme.border,
-      gap: 12,
+      minHeight: 80,
+      textAlignVertical: "top",
+      marginBottom: 16,
     },
-    modalSubtaskHeader: {
-      fontSize: 10,
+    priorityRow: {
+      flexDirection: "row",
+      gap: 8,
+      marginBottom: 20,
+      marginTop: 4,
+    },
+    chipBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.border,
+      backgroundColor: theme.background,
+    },
+    chipText: { fontSize: 12, fontWeight: "700", color: theme.subtext },
+    editBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: theme.brand + "15",
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.brand + "40",
+    },
+    suggestionPill: {
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.brand + "50",
+      padding: 12,
+      borderRadius: 14,
+      marginRight: 10,
+      minWidth: 140,
+    },
+    suggestionTitle: {
+      color: theme.text,
+      fontWeight: "700",
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    suggestionTime: { color: theme.subtext, fontSize: 11 },
+    gridLabel: {
+      fontSize: 11,
       fontWeight: "800",
       color: theme.subtext,
+      textTransform: "uppercase",
       letterSpacing: 1,
       marginBottom: 4,
     },
+    toastContainer: {
+      position: "absolute",
+      top: 60,
+      left: 24,
+      right: 24,
+      padding: 16,
+      borderRadius: 16,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      zIndex: 9999,
+      elevation: 10,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 5,
+    },
+    toastText: { color: "#FFF", fontWeight: "bold", fontSize: 14, flex: 1 },
+    modalOverlayCenter: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.6)",
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 24,
+    },
+    confirmDialog: {
+      backgroundColor: theme.card,
+      width: "100%",
+      borderRadius: 24,
+      padding: 24,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    confirmTitle: {
+      fontSize: 20,
+      fontWeight: "800",
+      color: theme.text,
+      marginBottom: 8,
+    },
+    confirmMessage: {
+      fontSize: 15,
+      color: theme.subtext,
+      lineHeight: 22,
+      marginBottom: 24,
+    },
+    confirmActions: {
+      flexDirection: "row",
+      justifyContent: "flex-end",
+      gap: 12,
+    },
+    confirmCancelBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: theme.background,
+    },
+    confirmCancelText: { color: theme.subtext, fontWeight: "bold" },
+    confirmDeleteBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: theme.danger,
+    },
+    confirmDeleteText: { color: "#FFF", fontWeight: "bold" },
   });

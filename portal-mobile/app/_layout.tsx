@@ -10,8 +10,8 @@ Notifications.setNotificationHandler({
     ({
       shouldShowAlert: true,
       shouldPlaySound: true,
-      shouldSetBadge: false,
-    }) as any,
+      shouldSetBadge: true,
+    }) as any, // <--- THE FIX IS HERE
 });
 
 // 2. Define the "Creative" Category with the Acknowledge Button
@@ -35,14 +35,20 @@ export default function RootLayout() {
         name: "default",
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: "#FF231F7C",
+        lightColor: "#3B82F6",
       });
     }
 
     // Request permissions (Crucial for Android 13+)
     const requestPermissions = async () => {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== "granted") {
+      const { status: existingStatus } =
+        await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== "granted") {
         console.log("Notification permissions denied!");
       }
     };
@@ -50,25 +56,40 @@ export default function RootLayout() {
     requestPermissions();
     setupNotificationCategories();
 
-    // 3. Listen for the user tapping the "Got it! 👍" button
+    // --- THE UPGRADED "ACKNOWLEDGE" ENGINE ---
     const responseListener =
-      Notifications.addNotificationResponseReceivedListener((response) => {
-        const actionId = response.actionIdentifier;
-        const data = response.notification.request.content.data as any;
+      Notifications.addNotificationResponseReceivedListener(
+        async (response) => {
+          const actionId = response.actionIdentifier;
+          const data = response.notification.request.content.data as any;
 
-        // If they tapped Acknowledge, cancel the exact-time backup notification
-        if (actionId === "ACKNOWLEDGE" && data?.eventId) {
-          console.log(
-            `User acknowledged! Canceling backup alarm for ${data.eventId}`,
-          );
-          Notifications.cancelScheduledNotificationAsync(
-            `${data.eventId}-exact`,
-          );
-        }
-      });
+          if (actionId === "ACKNOWLEDGE" && data?.eventId) {
+            console.log(
+              `User acknowledged! Sweeping and deleting all future alarms for ${data.eventId}`,
+            );
+
+            // 1. INSTANTLY DISMISS the notification from the tray (Triggers the cool slide-away OS animation)
+            await Notifications.dismissNotificationAsync(
+              response.notification.request.identifier,
+            );
+
+            // 2. Find ALL scheduled alarms on the phone
+            const scheduled =
+              await Notifications.getAllScheduledNotificationsAsync();
+
+            // 3. Loop through and delete any that match this specific task/class sequence
+            for (const notif of scheduled) {
+              if (notif.identifier.startsWith(data.eventId)) {
+                await Notifications.cancelScheduledNotificationAsync(
+                  notif.identifier,
+                );
+              }
+            }
+          }
+        },
+      );
 
     return () => {
-      // TypeScript fix: modern way to remove the listener in Expo
       responseListener.remove();
     };
   }, []);
