@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
@@ -95,11 +96,32 @@ export default function RootLayout() {
         async (response) => {
           const actionId = response.actionIdentifier;
 
-          // Since alarms are now remote, we just dismiss the current notification
           if (actionId === "ACKNOWLEDGE") {
+            // 1. Dismiss the notification from the screen
             await Notifications.dismissNotificationAsync(
               response.notification.request.identifier,
             );
+
+            // 2. Secretly tell the Render server we saw it!
+            const taskId = response.notification.request.content.data?.taskId;
+            if (taskId) {
+              try {
+                const token = await AsyncStorage.getItem("userToken");
+                const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+                if (token && BACKEND_URL) {
+                  await axios.put(
+                    `${BACKEND_URL}/tasks/${taskId}/acknowledge`,
+                    {},
+                    {
+                      headers: { "x-auth-token": token },
+                    },
+                  );
+                  console.log("Task acknowledged on server!");
+                }
+              } catch (error) {
+                console.log("Failed to acknowledge task", error);
+              }
+            }
           }
         },
       );

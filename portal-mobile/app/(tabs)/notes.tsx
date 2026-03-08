@@ -34,6 +34,8 @@ const Colors = {
     invertedText: "#FFFFFF",
     brand: "#3B82F6",
     brandBg: "rgba(59, 130, 246, 0.1)",
+    success: "#10B981", // Added to prevent crashes
+    danger: "#EF4444", // Added to prevent crashes
   },
   dark: {
     background: "#000000",
@@ -45,6 +47,8 @@ const Colors = {
     invertedText: "#000000",
     brand: "#3B82F6",
     brandBg: "rgba(59, 130, 246, 0.1)",
+    success: "#10B981", // Added to prevent crashes
+    danger: "#EF4444", // Added to prevent crashes
   },
 };
 
@@ -85,6 +89,14 @@ const generateHtml = (content: string, themeMode: string) => `
       color: ${themeMode === "dark" ? "#E5E5E5" : "#111827"}; 
       background-color: ${themeMode === "dark" ? "#000000" : "#FFFFFF"}; 
       word-wrap: break-word; 
+    }
+
+    /* THE HIGHLIGHTER FIX: Ensures readable text in Dark Mode by forcing theme overrides */
+    mark, .highlight, span[style*="background-color"] {
+      background-color: ${themeMode === "dark" ? "rgba(59, 130, 246, 0.4)" : "rgba(253, 224, 71, 0.8)"} !important;
+      color: ${themeMode === "dark" ? "#FFFFFF" : "#000000"} !important;
+      border-radius: 4px;
+      padding: 2px 4px;
     }
     
     /* Custom Monaco Block Styles */
