@@ -3,13 +3,21 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import axios from "axios";
 import { Audio } from "expo-av";
+import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import React, { ComponentProps, useEffect, useRef, useState } from "react";
+import React, {
+  ComponentProps,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Animated,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -17,7 +25,7 @@ import {
   TextInput,
   TouchableOpacity,
   useColorScheme,
-  View,
+  View
 } from "react-native";
 
 import UCPLogo from "../../components/UCPLogo";
@@ -32,6 +40,8 @@ const Colors = {
     brand: "#3B82F6",
     danger: "#F43F5E",
     success: "#10B981",
+    warning: "#F59E0B",
+    brandBg: "rgba(59, 130, 246, 0.1)",
   },
   dark: {
     background: "#000000",
@@ -42,6 +52,8 @@ const Colors = {
     brand: "#60A5FA",
     danger: "#FB7185",
     success: "#34D399",
+    warning: "#FBBF24",
+    brandBg: "rgba(59, 130, 246, 0.1)",
   },
 };
 
@@ -50,24 +62,29 @@ type TabItem = {
   icon: ComponentProps<typeof Ionicons>["name"];
   label: string;
 };
+
 const TAB_DATA: TabItem[] = [
   { id: "transaction", icon: "wallet-outline", label: "Cash" },
   { id: "task", icon: "checkbox-outline", label: "Task" },
   { id: "note", icon: "bulb-outline", label: "Snaps" },
 ];
+
 const EXPENSE_CATEGORIES = [
   { id: "Food & Dining", icon: "restaurant-outline" },
   { id: "Transportation", icon: "car-outline" },
   { id: "Shopping", icon: "cart-outline" },
   { id: "Education", icon: "book-outline" },
   { id: "Bills & Utilities", icon: "flash-outline" },
+  { id: "Debt Payoff", icon: "wallet-outline" },
   { id: "Entertainment", icon: "game-controller-outline" },
   { id: "Other", icon: "gift-outline" },
 ];
+
 const INCOME_CATEGORIES = [
   { id: "Salary", icon: "cash-outline" },
   { id: "Freelance", icon: "laptop-outline" },
   { id: "Investments", icon: "trending-up-outline" },
+  { id: "Loan Recovery", icon: "wallet-outline" },
   { id: "Gifts & Grants", icon: "gift-outline" },
   { id: "Other Income", icon: "add-outline" },
 ];
@@ -79,7 +96,7 @@ const getLocalYYYYMMDD = (date: Date) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-export default function AddScreen() {
+export default function AddScreen({ navigation }: any) {
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
 
@@ -111,6 +128,10 @@ export default function AddScreen() {
   const [tCategory, setTCategory] = useState("Food & Dining");
   const [tDate, setTDate] = useState(new Date().toISOString().split("T")[0]);
 
+  const [activeDebts, setActiveDebts] = useState<any[]>([]);
+  const [selectedDebt, setSelectedDebt] = useState<any | null>(null);
+  const [showDebtModal, setShowDebtModal] = useState(false);
+
   const [taskTitle, setTaskTitle] = useState("");
   const [taskStatus, setTaskStatus] = useState("New task");
   const [taskCourse, setTaskCourse] = useState("");
@@ -124,12 +145,17 @@ export default function AddScreen() {
   const [noteCourse, setNoteCourse] = useState("");
   const [showNoteCourseList, setShowNoteCourseList] = useState(false);
 
-  // --- MULTIPLE MEDIA STATES ---
-  const [mediaFiles, setMediaFiles] = useState<
-    { uri: string; type: "image" | "audio" }[]
-  >([]);
+  type MediaFile = {
+    uri: string;
+    type: "image" | "audio" | "document";
+    name?: string;
+    mimeType?: string;
+  };
+  const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | undefined>();
+
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
 
   const showToast = (
     msg: string,
@@ -150,52 +176,94 @@ export default function AddScreen() {
     }, 3500);
   };
 
+  const fetchInitialData = async () => {
+    try {
+      const [cCourses, cTime, cDebts] = await Promise.all([
+        AsyncStorage.getItem("off_acad_courses"),
+        AsyncStorage.getItem("off_acad_time"),
+        AsyncStorage.getItem("off_cash_debts"),
+      ]);
+      if (cCourses) setCourses(JSON.parse(cCourses));
+      if (cTime) setTimetable(JSON.parse(cTime));
+      if (cDebts)
+        setActiveDebts(
+          JSON.parse(cDebts).filter(
+            (d: any) => d.status.toLowerCase() === "pending",
+          ),
+        );
+
+      const token = await AsyncStorage.getItem("userToken");
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      if (!token || !BACKEND_URL) return;
+
+      const [courseRes, timeRes, debtRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/courses`, {
+          headers: { "x-auth-token": token },
+        }),
+        axios.get(`${BACKEND_URL}/timetable`, {
+          headers: { "x-auth-token": token },
+        }),
+        axios.get(`${BACKEND_URL}/debts`, {
+          headers: { "x-auth-token": token },
+        }),
+      ]);
+
+      const freshCourses = Array.isArray(courseRes.data) ? courseRes.data : [];
+      const freshTime = Array.isArray(timeRes.data) ? timeRes.data : [];
+      const freshDebts = Array.isArray(debtRes.data)
+        ? debtRes.data.filter((d: any) => d.status.toLowerCase() === "pending")
+        : [];
+
+      setCourses(freshCourses);
+      setTimetable(freshTime);
+      setActiveDebts(freshDebts);
+
+      AsyncStorage.setItem("off_acad_courses", JSON.stringify(freshCourses));
+      AsyncStorage.setItem("off_acad_time", JSON.stringify(freshTime));
+      AsyncStorage.setItem("off_cash_debts", JSON.stringify(debtRes.data));
+    } catch (error) {
+      console.log("Failed to load initial data");
+    }
+  };
+
   useEffect(() => {
-    const fetchInitialData = async () => {
-      try {
-        // THE FIX: Use standard cache keys to ensure data is available instantly
-        const [cCourses, cTime] = await Promise.all([
-          AsyncStorage.getItem("off_acad_courses"),
-          AsyncStorage.getItem("off_acad_time"),
-        ]);
-        if (cCourses) setCourses(JSON.parse(cCourses));
-        if (cTime) setTimetable(JSON.parse(cTime));
-
-        const token = await AsyncStorage.getItem("userToken");
-        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-        if (!token || !BACKEND_URL) return;
-
-        const [courseRes, timeRes] = await Promise.all([
-          axios.get(`${BACKEND_URL}/courses`, {
-            headers: { "x-auth-token": token },
-          }),
-          axios.get(`${BACKEND_URL}/timetable`, {
-            headers: { "x-auth-token": token },
-          }),
-        ]);
-
-        const freshCourses = Array.isArray(courseRes.data)
-          ? courseRes.data
-          : [];
-        const freshTime = Array.isArray(timeRes.data) ? timeRes.data : [];
-
-        setCourses(freshCourses);
-        setTimetable(freshTime);
-
-        AsyncStorage.setItem("off_acad_courses", JSON.stringify(freshCourses));
-        AsyncStorage.setItem("off_acad_time", JSON.stringify(freshTime));
-      } catch (error) {
-        console.log("Failed to load initial data");
-      }
-    };
     fetchInitialData();
-  }, []);
+    if (navigation && navigation.addListener) {
+      const unsubscribe = navigation.addListener("focus", () =>
+        fetchInitialData(),
+      );
+      return unsubscribe;
+    }
+  }, [navigation]);
 
   useEffect(() => {
     setTCategory(tType === "expense" ? "Food & Dining" : "Salary");
+    setSelectedDebt(null);
   }, [tType]);
 
-  // THE FIX: Indestructible Timezone-Safe Course Matcher
+  const eligibleDebts = useMemo(() => {
+    const numAmount = parseFloat(tAmount) || 0;
+    const requiredDebtType = tType === "income" ? "lent" : "borrowed";
+    return activeDebts.filter(
+      (d) => d.type === requiredDebtType && d.amount >= numAmount,
+    );
+  }, [tAmount, tType, activeDebts]);
+
+  const isDebtCategory =
+    tCategory === "Debt Payoff" || tCategory === "Loan Recovery";
+
+  const handleCategorySelect = (catId: string) => {
+    setTCategory(catId);
+    if (
+      (catId === "Debt Payoff" || catId === "Loan Recovery") &&
+      eligibleDebts.length > 0
+    ) {
+      setShowDebtModal(true);
+    } else {
+      setSelectedDebt(null);
+    }
+  };
+
   const getClassesForDate = (dateString: string, courseName: string) => {
     if (
       !dateString ||
@@ -203,10 +271,8 @@ export default function AddScreen() {
       !timetable.length ||
       !courseName ||
       courseName === "General"
-    ) {
+    )
       return [];
-    }
-
     const days = [
       "Sunday",
       "Monday",
@@ -216,10 +282,7 @@ export default function AddScreen() {
       "Friday",
       "Saturday",
     ];
-
     let targetDay = "";
-
-    // Prevent UTC Midnight Shifting
     if (dateString.includes("-")) {
       const [y, m, d] = dateString.split("-");
       const localDate = new Date(Number(y), Number(m) - 1, Number(d));
@@ -227,7 +290,6 @@ export default function AddScreen() {
     } else {
       targetDay = days[new Date(dateString).getDay()];
     }
-
     return timetable.filter((t) => {
       const tDay = String(t.day || "")
         .trim()
@@ -236,7 +298,6 @@ export default function AddScreen() {
         .trim()
         .toLowerCase();
       const selectedCourseName = String(courseName).trim().toLowerCase();
-
       return (
         tDay === targetDay.toLowerCase() && tCourseName === selectedCourseName
       );
@@ -270,6 +331,7 @@ export default function AddScreen() {
         return "mail-outline";
     }
   };
+
   const getPriorityIcon = (p: string): any => {
     switch (p) {
       case "Critical":
@@ -314,6 +376,7 @@ export default function AddScreen() {
     }
   };
 
+  // --- MEDIA HANDLERS ---
   const handleSnap = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted")
@@ -325,12 +388,16 @@ export default function AddScreen() {
     if (!result.canceled) {
       setMediaFiles((prev) => [
         ...prev,
-        { uri: result.assets[0].uri, type: "image" },
+        {
+          uri: result.assets[0].uri,
+          type: "image",
+          name: result.assets[0].uri.split("/").pop(),
+        },
       ]);
     }
   };
 
-  const handlePickImage = async () => {
+  const handlePickGallery = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted")
       return showToast("Gallery access is required.", "error");
@@ -342,9 +409,35 @@ export default function AddScreen() {
       const newFiles = result.assets.map((a) => ({
         uri: a.uri,
         type: "image" as const,
+        name: a.uri.split("/").pop(),
       }));
       setMediaFiles((prev) => [...prev, ...newFiles]);
     }
+    setShowAttachMenu(false);
+  };
+
+  const handlePickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled) {
+        const file = result.assets[0];
+        setMediaFiles((prev) => [
+          ...prev,
+          {
+            uri: file.uri,
+            type: "document",
+            name: file.name,
+            mimeType: file.mimeType,
+          },
+        ]);
+      }
+    } catch (err) {
+      showToast("Failed to pick document", "error");
+    }
+    setShowAttachMenu(false);
   };
 
   const handleRecord = async () => {
@@ -353,7 +446,11 @@ export default function AddScreen() {
       if (recording) {
         await recording.stopAndUnloadAsync();
         const uri = recording.getURI();
-        if (uri) setMediaFiles((prev) => [...prev, { uri, type: "audio" }]);
+        if (uri)
+          setMediaFiles((prev) => [
+            ...prev,
+            { uri, type: "audio", name: "Voice Note.m4a" },
+          ]);
       }
     } else {
       try {
@@ -400,13 +497,33 @@ export default function AddScreen() {
           date: tDate,
         };
         try {
-          await axios.post(`${BACKEND_URL}/transactions`, payload, { headers });
-          showToast("Cash logged successfully!", "success");
+          if (isDebtCategory && selectedDebt) {
+            await axios.post(
+              `${BACKEND_URL}/debts/${selectedDebt._id}/pay`,
+              { amount: payload.amount, date: payload.date },
+              { headers },
+            );
+            showToast("Linked Payment recorded!", "success");
+          } else {
+            await axios.post(`${BACKEND_URL}/transactions`, payload, {
+              headers,
+            });
+            showToast("Cash logged successfully!", "success");
+          }
+          await fetchInitialData();
         } catch (e) {
           saveOfflineQueue("ADD", "/transactions", payload);
         }
       } else if (activeTab === "task") {
         if (!taskTitle) return showToast("Task Title is required.", "error");
+
+        // Prepare server trigger date
+        const triggerDate = new Date(taskDateObj);
+        triggerDate.setHours(taskTimeObj.getHours());
+        triggerDate.setMinutes(taskTimeObj.getMinutes());
+        triggerDate.setSeconds(0);
+        triggerDate.setMilliseconds(0);
+
         const payload = {
           name: taskTitle,
           description: taskDesc,
@@ -416,7 +533,9 @@ export default function AddScreen() {
           priority: taskPriority,
           status: taskStatus,
           subTasks: [],
+          triggerAt: triggerDate.toISOString(),
         };
+
         try {
           await axios.post(`${BACKEND_URL}/tasks`, payload, { headers });
           showToast("Task created successfully!", "success");
@@ -436,20 +555,21 @@ export default function AddScreen() {
 
         if (mediaFiles.length > 0) {
           const formData = new FormData();
-
           mediaFiles.forEach((media, index) => {
-            const filename = media.uri.split("/").pop() || `media_${index}.jpg`;
+            const filename = media.name || `media_${index}`;
             const match = /\.(\w+)$/.exec(filename);
-
             const ext = match
               ? match[1].toLowerCase()
               : media.type === "audio"
                 ? "m4a"
                 : "jpg";
 
-            let mime = media.type === "audio" ? `audio/${ext}` : `image/${ext}`;
-            if (ext === "m4a") mime = "audio/mp4";
-            if (ext === "jpg") mime = "image/jpeg";
+            let mime =
+              media.type === "document" && media.mimeType
+                ? media.mimeType
+                : media.type === "audio"
+                  ? `audio/mp4`
+                  : `image/jpeg`;
 
             formData.append("files", {
               uri:
@@ -467,26 +587,26 @@ export default function AddScreen() {
               headers: { "x-auth-token": token },
               body: formData,
             });
-
             if (!uploadRes.ok) throw new Error("Upload failed");
-
             const uploadData = await uploadRes.json();
-            if (uploadData.urls) {
-              finalMediaUrls = uploadData.urls;
-            }
+            if (uploadData.urls) finalMediaUrls.push(...uploadData.urls);
           } catch (uploadError) {
             setIsSaving(false);
-            return showToast("Could not upload media to the server.", "error");
+            return showToast(
+              "Could not upload local media to the server.",
+              "error",
+            );
           }
         }
 
         let overallType = "text";
         if (mediaFiles.length > 0) {
-          const hasImages = mediaFiles.some((m) => m.type === "image");
-          const hasAudio = mediaFiles.some((m) => m.type === "audio");
-          if (hasImages && hasAudio) overallType = "mixed";
-          else if (hasImages) overallType = "image";
-          else if (hasAudio) overallType = "audio";
+          overallType = "mixed";
+          const typesSet = new Set(mediaFiles.map((m) => m.type));
+          if (typesSet.size === 1) {
+            if (typesSet.has("image")) overallType = "image";
+            if (typesSet.has("audio")) overallType = "audio";
+          }
         }
 
         const payload = {
@@ -496,7 +616,6 @@ export default function AddScreen() {
           content: noteBody,
           mediaUrls: finalMediaUrls,
         };
-
         try {
           await axios.post(`${BACKEND_URL}/keynotes`, payload, { headers });
           showToast("Snap saved to Inbox!", "success");
@@ -516,6 +635,7 @@ export default function AddScreen() {
       setNoteBody("");
       setNoteCourse("");
       setMediaFiles([]);
+      setSelectedDebt(null);
     } catch (error) {
       showToast("Failed to process data.", "error");
     } finally {
@@ -608,6 +728,7 @@ export default function AddScreen() {
           ))}
         </View>
 
+        {/* --- CASH TAB --- */}
         {activeTab === "transaction" && (
           <View style={styles.formContainer}>
             <View style={styles.segmentControl}>
@@ -619,7 +740,10 @@ export default function AddScreen() {
                     borderColor: theme.danger,
                   },
                 ]}
-                onPress={() => setTType("expense")}
+                onPress={() => {
+                  setTType("expense");
+                  setSelectedDebt(null);
+                }}
               >
                 <Text
                   style={[
@@ -638,7 +762,10 @@ export default function AddScreen() {
                     borderColor: theme.success,
                   },
                 ]}
-                onPress={() => setTType("income")}
+                onPress={() => {
+                  setTType("income");
+                  setSelectedDebt(null);
+                }}
               >
                 <Text
                   style={[
@@ -660,7 +787,10 @@ export default function AddScreen() {
                   placeholder="0.00"
                   placeholderTextColor={theme.subtext}
                   value={tAmount}
-                  onChangeText={setTAmount}
+                  onChangeText={(val) => {
+                    setTAmount(val);
+                    setSelectedDebt(null);
+                  }}
                 />
               </View>
               <View style={{ flex: 1 }}>
@@ -703,7 +833,7 @@ export default function AddScreen() {
                           : theme.success + "15",
                     },
                   ]}
-                  onPress={() => setTCategory(cat.id)}
+                  onPress={() => handleCategorySelect(cat.id)}
                 >
                   <Ionicons
                     name={cat.icon as any}
@@ -732,6 +862,51 @@ export default function AddScreen() {
               ))}
             </View>
 
+            {isDebtCategory && tAmount !== "" && (
+              <View style={styles.debtIntegrationBox}>
+                {eligibleDebts.length > 0 ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.debtSelector,
+                      selectedDebt && {
+                        borderColor: theme.success,
+                        backgroundColor: theme.success + "15",
+                      },
+                    ]}
+                    onPress={() => setShowDebtModal(true)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.debtSelectorLabel,
+                          selectedDebt && { color: theme.success },
+                        ]}
+                      >
+                        {selectedDebt
+                          ? "Linked to Record:"
+                          : `Tap to link a ${tType === "income" ? "Loan" : "Debt"}`}
+                      </Text>
+                      {selectedDebt && (
+                        <Text
+                          style={styles.debtSelectorValue}
+                        >{`${selectedDebt.person} (Balance: Rs ${selectedDebt.amount})`}</Text>
+                      )}
+                    </View>
+                    <Ionicons
+                      name="link"
+                      size={20}
+                      color={selectedDebt ? theme.success : theme.subtext}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.warningText}>
+                    <Ionicons name="information-circle" size={12} /> Amount
+                    exceeds active records, or none exist.
+                  </Text>
+                )}
+              </View>
+            )}
+
             <Text style={styles.label}>Description</Text>
             <TextInput
               style={styles.input}
@@ -743,6 +918,7 @@ export default function AddScreen() {
           </View>
         )}
 
+        {/* --- TASKS TAB --- */}
         {activeTab === "task" && (
           <View style={styles.formContainer}>
             <Text style={styles.label}>Task Title</Text>
@@ -822,7 +998,6 @@ export default function AddScreen() {
                   color={theme.subtext}
                 />
               </TouchableOpacity>
-
               {showCourseList && (
                 <View style={styles.dropdownList}>
                   <TouchableOpacity
@@ -920,40 +1095,43 @@ export default function AddScreen() {
               </View>
             </View>
 
-            {/* THE FIX: Enhanced Render Loop for Class Suggestions */}
-            {taskDate && getClassesForDate(taskDate, taskCourse).length > 0 && (
-              <View style={{ marginTop: 8 }}>
-                <Text style={[styles.label, { color: theme.brand }]}>
-                  ✨ Link to a class on this day?
-                </Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={{ marginTop: 8 }}
-                >
-                  {getClassesForDate(taskDate, taskCourse).map(
-                    (cls: any, idx: number) => (
-                      <TouchableOpacity
-                        key={idx}
-                        style={styles.suggestionPill}
-                        onPress={() => {
-                          setTaskCourse(cls.courseName || cls.name);
-                          setTaskTime(cls.startTime);
-                          showToast("Class Linked!", "info");
-                        }}
-                      >
-                        <Text style={styles.suggestionTitle} numberOfLines={1}>
-                          {cls.courseName || cls.name}
-                        </Text>
-                        <Text style={styles.suggestionTime}>
-                          {cls.startTime || "TBA"} - {cls.room || "TBA"}
-                        </Text>
-                      </TouchableOpacity>
-                    ),
-                  )}
-                </ScrollView>
-              </View>
-            )}
+            {taskDate !== "" &&
+              getClassesForDate(taskDate, taskCourse).length > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={[styles.label, { color: theme.brand }]}>
+                    ✨ Link to a class on this day?
+                  </Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{ marginTop: 8 }}
+                  >
+                    {getClassesForDate(taskDate, taskCourse).map(
+                      (cls: any, idx: number) => (
+                        <TouchableOpacity
+                          key={idx}
+                          style={styles.suggestionPill}
+                          onPress={() => {
+                            setTaskCourse(cls.courseName || cls.name);
+                            setTaskTime(cls.startTime);
+                            showToast("Class Linked!", "info");
+                          }}
+                        >
+                          <Text
+                            style={styles.suggestionTitle}
+                            numberOfLines={1}
+                          >
+                            {cls.courseName || cls.name}
+                          </Text>
+                          <Text
+                            style={styles.suggestionTime}
+                          >{`${cls.startTime || "TBA"} - ${cls.room || "TBA"}`}</Text>
+                        </TouchableOpacity>
+                      ),
+                    )}
+                  </ScrollView>
+                </View>
+              )}
 
             <Text style={styles.label}>Priority</Text>
             <View style={styles.row}>
@@ -1004,6 +1182,7 @@ export default function AddScreen() {
           </View>
         )}
 
+        {/* --- NOTES TAB --- */}
         {activeTab === "note" && (
           <View style={styles.formContainer}>
             <View>
@@ -1039,7 +1218,6 @@ export default function AddScreen() {
                   color={theme.subtext}
                 />
               </TouchableOpacity>
-
               {showNoteCourseList && (
                 <View style={styles.dropdownList}>
                   <TouchableOpacity
@@ -1128,6 +1306,17 @@ export default function AddScreen() {
                           resizeMode: "cover",
                         }}
                       />
+                    ) : media.type === "document" ? (
+                      <View style={styles.documentThumbnail}>
+                        <Ionicons
+                          name="document-text"
+                          size={32}
+                          color={theme.brand}
+                        />
+                        <Text style={styles.docThumbText} numberOfLines={2}>
+                          {media.name || "Web Document"}
+                        </Text>
+                      </View>
                     ) : (
                       <View style={styles.audioThumbnail}>
                         <Ionicons
@@ -1165,15 +1354,17 @@ export default function AddScreen() {
                   Camera
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.actionBtn}
-                onPress={handlePickImage}
+                onPress={() => setShowAttachMenu(true)}
               >
-                <Ionicons name="images" size={24} color={theme.brand} />
+                <Ionicons name="attach" size={24} color={theme.brand} />
                 <Text style={[styles.actionBtnText, { color: theme.brand }]}>
-                  Gallery
+                  Attach
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[
                   styles.actionBtn,
@@ -1210,15 +1401,68 @@ export default function AddScreen() {
           {isSaving ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <Text style={styles.saveBtnText}>
-              Save{" "}
-              {activeTab === "note"
-                ? "Snap"
-                : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
-            </Text>
+            <Text
+              style={styles.saveBtnText}
+            >{`Save ${activeTab === "note" ? "Snap" : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}</Text>
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* --- ATTACH MENU MODAL --- */}
+      <Modal visible={showAttachMenu} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowAttachMenu(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[
+              styles.attachMenuContent,
+              { backgroundColor: theme.card, borderColor: theme.border },
+            ]}
+          >
+            <View style={styles.attachMenuIndicator} />
+            <Text style={styles.attachMenuTitle}>Add Attachment</Text>
+
+            <View style={styles.attachOptionsRow}>
+              <TouchableOpacity
+                style={styles.attachOptionBox}
+                onPress={handlePickGallery}
+              >
+                <View
+                  style={[
+                    styles.attachIconBg,
+                    { backgroundColor: "rgba(244, 63, 94, 0.1)" },
+                  ]}
+                >
+                  <Ionicons name="images" size={32} color={theme.danger} />
+                </View>
+                <Text style={styles.attachOptionText}>Gallery</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.attachOptionBox}
+                onPress={handlePickDocument}
+              >
+                <View
+                  style={[
+                    styles.attachIconBg,
+                    { backgroundColor: theme.brandBg },
+                  ]}
+                >
+                  <Ionicons
+                    name="document-text"
+                    size={32}
+                    color={theme.brand}
+                  />
+                </View>
+                <Text style={styles.attachOptionText}>Document</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1367,12 +1611,22 @@ const getStyles = (theme: any) =>
       borderWidth: 1,
       borderColor: theme.border,
       marginRight: 12,
-    },
-    audioThumbnail: {
-      flex: 1,
       backgroundColor: theme.card,
+    },
+    audioThumbnail: { flex: 1, alignItems: "center", justifyContent: "center" },
+    documentThumbnail: {
+      flex: 1,
       alignItems: "center",
       justifyContent: "center",
+      padding: 8,
+      backgroundColor: theme.brandBg,
+    },
+    docThumbText: {
+      fontSize: 10,
+      color: theme.text,
+      fontWeight: "600",
+      textAlign: "center",
+      marginTop: 4,
     },
     mediaRemoveBtn: {
       position: "absolute",
@@ -1382,6 +1636,42 @@ const getStyles = (theme: any) =>
       padding: 6,
       borderRadius: 20,
     },
+    attachMenuContent: {
+      width: "100%",
+      padding: 24,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      borderWidth: 1,
+    },
+    attachMenuIndicator: {
+      width: 40,
+      height: 5,
+      backgroundColor: theme.border,
+      borderRadius: 3,
+      alignSelf: "center",
+      marginBottom: 20,
+    },
+    attachMenuTitle: {
+      fontSize: 20,
+      fontWeight: "800",
+      color: theme.text,
+      marginBottom: 24,
+      textAlign: "center",
+    },
+    attachOptionsRow: {
+      flexDirection: "row",
+      justifyContent: "space-around",
+      marginBottom: 10,
+    },
+    attachOptionBox: { alignItems: "center", gap: 12 },
+    attachIconBg: {
+      width: 70,
+      height: 70,
+      borderRadius: 35,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    attachOptionText: { fontSize: 14, fontWeight: "700", color: theme.text },
     toastContainer: {
       position: "absolute",
       top: 60,
@@ -1394,10 +1684,6 @@ const getStyles = (theme: any) =>
       gap: 10,
       zIndex: 9999,
       elevation: 10,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.2,
-      shadowRadius: 5,
     },
     toastText: { color: "#FFF", fontWeight: "bold", fontSize: 14, flex: 1 },
     suggestionPill: {
@@ -1416,4 +1702,64 @@ const getStyles = (theme: any) =>
       marginBottom: 4,
     },
     suggestionTime: { color: theme.subtext, fontSize: 11 },
+    debtIntegrationBox: { marginTop: 4, marginBottom: 8 },
+    debtSelector: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: 16,
+      backgroundColor: theme.card,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    debtSelectorLabel: {
+      fontSize: 11,
+      fontWeight: "700",
+      color: theme.subtext,
+      marginBottom: 4,
+      textTransform: "uppercase",
+    },
+    debtSelectorValue: { fontSize: 15, fontWeight: "800", color: theme.text },
+    warningText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: theme.warning,
+      marginTop: 4,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.6)",
+      justifyContent: "flex-end",
+    },
+    modalContent: {
+      backgroundColor: theme.background,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      padding: 24,
+      paddingBottom: 40,
+    },
+    modalTitle: {
+      fontSize: 20,
+      fontWeight: "900",
+      color: theme.text,
+      marginBottom: 6,
+    },
+    modalSub: { fontSize: 13, color: theme.subtext, marginBottom: 20 },
+    debtItem: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    debtItemName: {
+      fontSize: 16,
+      fontWeight: "800",
+      color: theme.text,
+      marginBottom: 4,
+    },
+    debtItemDate: { fontSize: 12, color: theme.subtext },
+    debtItemAmount: { fontSize: 16, fontWeight: "900", color: theme.text },
   });

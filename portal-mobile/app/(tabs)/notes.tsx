@@ -86,30 +86,39 @@ const generateHtml = (content: string, themeMode: string) => `
       background-color: ${themeMode === "dark" ? "#000000" : "#FFFFFF"}; 
       word-wrap: break-word; 
     }
-    pre { 
-      background-color: #282c34 !important; 
-      color: #abb2bf !important; 
-      padding: 16px; 
-      padding-top: 48px !important;
-      border-radius: 8px; 
-      overflow-x: auto; 
-      font-family: 'Courier New', Courier, monospace; 
-      font-size: 14px;
+    
+    /* Custom Monaco Block Styles */
+    .custom-monaco-container {
+      background-color: #1A1A1A !important;
+      border-radius: 8px;
       margin: 16px 0;
       border: 1px solid ${themeMode === "dark" ? "#333" : "#E5E5E5"};
-      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
-    .hljs { background: transparent !important; padding: 0 !important; }
-    
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: #252525;
+      padding: 8px 12px;
+      border-bottom: 1px solid #333;
+    }
+    .lang-label {
+      color: #A3A3A3;
+      font-size: 11px;
+      font-weight: bold;
+      font-family: sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
     .custom-copy-btn {
-      position: absolute !important;
-      top: 8px !important;
-      right: 8px !important;
       background: rgba(255, 255, 255, 0.1) !important;
       color: #A3A3A3 !important;
-      border: 1px solid rgba(255, 255, 255, 0.1) !important;
+      border: 1px solid rgba(255, 255, 255, 0.05) !important;
       border-radius: 6px !important;
-      padding: 6px 10px !important;
+      padding: 4px 10px !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -117,8 +126,26 @@ const generateHtml = (content: string, themeMode: string) => `
       font-size: 11px !important;
       font-weight: bold !important;
       font-family: sans-serif !important;
-      z-index: 50 !important;
+      transition: all 0.2s;
     }
+    .custom-copy-btn:active {
+      background: rgba(255, 255, 255, 0.2) !important;
+    }
+    .custom-monaco-container pre {
+      margin: 0 !important;
+      padding: 16px !important;
+      background: transparent !important;
+      border: none !important;
+      border-radius: 0 !important;
+    }
+    .custom-monaco-container code {
+      font-family: 'Courier New', Courier, monospace; 
+      font-size: 14px;
+      display: block;
+      overflow-x: auto;
+    }
+    
+    .hljs { background: transparent !important; padding: 0 !important; }
     img { max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; }
     a { color: #3B82F6; text-decoration: none; }
     p { margin-bottom: 16px; }
@@ -130,16 +157,25 @@ const generateHtml = (content: string, themeMode: string) => `
 <body>
   ${content}
   <script>
-    var svgCopy = '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy';
-    var svgCheck = '<svg viewBox="0 0 24 24" width="14" height="14" stroke="#10B981" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!';
+    var svgCopy = '<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy';
+    var svgCheck = '<svg viewBox="0 0 24 24" width="12" height="12" stroke="#10B981" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!';
 
-    document.querySelectorAll('pre').forEach(function(pre) {
-      var code = document.createElement('code');
-      code.innerHTML = pre.innerHTML;
-      pre.innerHTML = '';
-      pre.appendChild(code);
+    // 1. Handle custom Tiptap Monaco Blocks
+    document.querySelectorAll('div[data-monaco-block]').forEach(function(block) {
+      var rawCode = block.getAttribute('code') || '';
+      var lang = block.getAttribute('language') || 'javascript';
+
+      // Create main container
+      var container = document.createElement('div');
+      container.className = 'custom-monaco-container';
+
+      // Create Header (Language Tag + Copy Button)
+      var header = document.createElement('div');
+      header.className = 'code-header';
       
-      hljs.highlightElement(code);
+      var langSpan = document.createElement('span');
+      langSpan.className = 'lang-label';
+      langSpan.innerText = lang;
 
       var btn = document.createElement('button');
       btn.className = 'custom-copy-btn';
@@ -148,12 +184,40 @@ const generateHtml = (content: string, themeMode: string) => `
       btn.onclick = function(e) {
         e.stopPropagation();
         e.preventDefault();
-        var rawText = code.innerText.trim();
-        window.location.href = 'copycode://' + encodeURIComponent(rawText);
+        window.location.href = 'copycode://' + encodeURIComponent(rawCode);
         btn.innerHTML = svgCheck;
         setTimeout(() => { btn.innerHTML = svgCopy; }, 2000);
       };
-      pre.appendChild(btn);
+
+      header.appendChild(langSpan);
+      header.appendChild(btn);
+
+      // Create Code Area
+      var pre = document.createElement('pre');
+      var codeEl = document.createElement('code');
+      codeEl.className = 'language-' + lang;
+      
+      // Use textContent to safely render the raw code without executing it
+      codeEl.textContent = rawCode; 
+      
+      pre.appendChild(codeEl);
+      container.appendChild(header);
+      container.appendChild(pre);
+
+      // Apply Syntax Highlighting
+      hljs.highlightElement(codeEl);
+
+      // Replace the invisible div with our beautiful new UI
+      block.parentNode.replaceChild(container, block);
+    });
+
+    // 2. Fallback for standard <pre> blocks (just in case)
+    document.querySelectorAll('pre:not(.custom-monaco-container pre)').forEach(function(pre) {
+      var code = document.createElement('code');
+      code.innerHTML = pre.innerHTML;
+      pre.innerHTML = '';
+      pre.appendChild(code);
+      hljs.highlightElement(code);
     });
   </script>
 </body>
@@ -183,6 +247,9 @@ export default function NotesScreen() {
   const [isCourseFilterOpen, setIsCourseFilterOpen] = useState(false);
   const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
   const [viewingNote, setViewingNote] = useState<any>(null);
+
+  // NEW: State for our custom confirmation modal
+  const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
 
   // --- THE ULTIMATE DUAL-COLLECTION MATCHER ---
   const getMatchedCourse = (note: any) => {
@@ -373,36 +440,34 @@ export default function NotesScreen() {
     selectedDateRange,
   ]);
 
+  // 1. Opens the themed modal
   const handleDelete = (noteId: string) => {
-    Alert.alert(
-      "Move to Bin",
-      "Are you sure you want to move this note to the bin?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-              const token = await AsyncStorage.getItem("userToken");
-              await axios.put(
-                `${BACKEND_URL}/notes/${noteId}/delete`,
-                {},
-                { headers: { "x-auth-token": token } },
-              );
-              setViewingNote(null);
-              fetchData();
-            } catch (error) {
-              Alert.alert(
-                "Connection Error",
-                "Could not reach server to delete.",
-              );
-            }
-          },
-        },
-      ],
-    );
+    setNoteToDelete(noteId);
+  };
+
+  // 2. Executes the deletion when confirmed
+  const confirmDelete = async () => {
+    if (!noteToDelete) return;
+    try {
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      const token = await AsyncStorage.getItem("userToken");
+      await axios.put(
+        `${BACKEND_URL}/notes/${noteToDelete}/delete`,
+        {},
+        { headers: { "x-auth-token": token } },
+      );
+
+      // If we are deleting the note we are currently viewing, close the viewer
+      if (viewingNote?._id === noteToDelete) {
+        setViewingNote(null);
+      }
+
+      setNoteToDelete(null); // Close modal on success
+      fetchData();
+    } catch (error) {
+      Alert.alert("Connection Error", "Could not reach server to delete.");
+      setNoteToDelete(null); // Close modal on error
+    }
   };
 
   const openAttachment = (url: string) => {
@@ -571,7 +636,7 @@ export default function NotesScreen() {
                         ) : (
                           <Ionicons name="book" size={12} color={theme.brand} />
                         )}
-                        <Text style={styles.coursePillText} numberOfLines={1}>
+                        <Text style={styles.coursePillText}>
                           {matchedCourse?.name || "General"}
                         </Text>
                       </View>
@@ -804,7 +869,7 @@ export default function NotesScreen() {
                       ) : (
                         <Ionicons name="book" size={14} color={theme.brand} />
                       )}
-                      <Text style={styles.coursePillText} numberOfLines={1}>
+                      <Text style={styles.coursePillText}>
                         {matchedViewerCourse?.name || "General"}
                       </Text>
                     </>
@@ -868,6 +933,60 @@ export default function NotesScreen() {
             }}
           />
         </View>
+      </Modal>
+
+      {/* THEMED CONFIRMATION MODAL */}
+      <Modal visible={!!noteToDelete} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setNoteToDelete(null)}
+        >
+          <View
+            style={[
+              styles.confirmModalBox,
+              { backgroundColor: theme.card, borderColor: theme.border },
+            ]}
+          >
+            <View style={styles.confirmIconContainer}>
+              <Ionicons name="trash-outline" size={32} color="#EF4444" />
+            </View>
+
+            <Text style={[styles.confirmTitle, { color: theme.text }]}>
+              Move to Bin?
+            </Text>
+            <Text style={[styles.confirmMessage, { color: theme.subtext }]}>
+              Are you sure you want to move this note to the recycle bin?
+            </Text>
+
+            <View style={styles.confirmActionRow}>
+              <TouchableOpacity
+                style={[
+                  styles.confirmBtn,
+                  {
+                    backgroundColor: theme.background,
+                    borderColor: theme.border,
+                    borderWidth: 1,
+                  },
+                ]}
+                onPress={() => setNoteToDelete(null)}
+              >
+                <Text style={[styles.confirmBtnText, { color: theme.text }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmBtn, { backgroundColor: "#EF4444" }]}
+                onPress={confirmDelete}
+              >
+                <Text style={[styles.confirmBtnText, { color: "#FFFFFF" }]}>
+                  Delete
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -982,6 +1101,7 @@ const getStyles = (theme: any) =>
       borderTopWidth: 1,
       borderTopColor: theme.border,
       paddingTop: 16,
+      gap: 10, // Ensures a safe distance between the pill and the date
     },
     coursePill: {
       flexDirection: "row",
@@ -991,14 +1111,20 @@ const getStyles = (theme: any) =>
       paddingHorizontal: 10,
       paddingVertical: 6,
       borderRadius: 8,
+      flexShrink: 1, // Allows the pill container to adapt dynamically
     },
     coursePillText: {
       fontSize: 11,
       fontWeight: "800",
       color: theme.brand,
-      maxWidth: 150,
+      flexShrink: 1, // Lets the text truncate naturally based on real screen width
     },
-    dateText: { fontSize: 12, fontWeight: "600", color: theme.subtext },
+    dateText: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: theme.subtext,
+      flexShrink: 0, // Protects the date from ever being squished or pushed off screen
+    },
     modalOverlay: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.5)",
@@ -1027,8 +1153,20 @@ const getStyles = (theme: any) =>
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
     },
-    modalOptLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-    modalOptText: { fontSize: 16, fontWeight: "600", color: theme.text },
+    modalOptLeft: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingRight: 12,
+    },
+    modalOptText: {
+      flex: 1,
+      fontSize: 16,
+      fontWeight: "600",
+      color: theme.text,
+      flexWrap: "wrap",
+    },
     viewerContainer: { flex: 1, backgroundColor: theme.background },
     viewerHeader: {
       flexDirection: "row",
@@ -1074,4 +1212,54 @@ const getStyles = (theme: any) =>
       marginRight: 10,
     },
     attachmentText: { fontSize: 12, fontWeight: "700", color: theme.text },
+
+    // --- CONFIRMATION MODAL STYLES ---
+    confirmModalBox: {
+      width: "85%",
+      borderRadius: 24,
+      padding: 24,
+      borderWidth: 1,
+      alignItems: "center",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.15,
+      shadowRadius: 20,
+      elevation: 10,
+    },
+    confirmIconContainer: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: "rgba(239, 68, 68, 0.1)",
+      justifyContent: "center",
+      alignItems: "center",
+      marginBottom: 16,
+    },
+    confirmTitle: {
+      fontSize: 20,
+      fontWeight: "900",
+      marginBottom: 8,
+    },
+    confirmMessage: {
+      fontSize: 14,
+      textAlign: "center",
+      marginBottom: 24,
+      lineHeight: 20,
+    },
+    confirmActionRow: {
+      flexDirection: "row",
+      gap: 12,
+      width: "100%",
+    },
+    confirmBtn: {
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 14,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    confirmBtnText: {
+      fontSize: 15,
+      fontWeight: "800",
+    },
   });

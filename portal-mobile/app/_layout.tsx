@@ -1,20 +1,27 @@
 import axios from "axios";
 import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
-import { useEffect } from "react";
-import { Platform } from "react-native";
+import * as SplashScreen from "expo-splash-screen";
+import { useEffect, useState } from "react";
+import { Platform, View } from "react-native";
 
-// 1. Tell the app to show notifications even when in the foreground
+// Import your custom animated splash component
+import AnimatedSplashScreen from "../components/AnimatedSplashScreen";
+
+// 1. Keep the native splash screen visible while we render our custom one
+SplashScreen.preventAutoHideAsync();
+
+// 2. Tell the app to show notifications even when in the foreground
 Notifications.setNotificationHandler({
   handleNotification: async () =>
     ({
       shouldShowAlert: true,
       shouldPlaySound: true,
       shouldSetBadge: true,
-    }) as any, // <--- THE FIX IS HERE
+    }) as any,
 });
 
-// 2. Define the "Creative" Category with the Acknowledge Button
+// 3. Define the "Creative" Category with the Acknowledge Button
 async function setupNotificationCategories() {
   await Notifications.setNotificationCategoryAsync("smart-alert", [
     {
@@ -28,8 +35,28 @@ async function setupNotificationCategories() {
 }
 
 export default function RootLayout() {
+  // State for our custom splash animation
+  const [appReady, setAppReady] = useState(false);
+  const [splashAnimationDone, setSplashAnimationDone] = useState(false);
+
+  // --- APP BOOTSTRAP & SPLASH EFFECT ---
   useEffect(() => {
-    // --- ANDROID CHANNEL SETUP (Crucial for local alarms to work) ---
+    async function prepare() {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        setAppReady(true);
+        // Hide the native splash screen so our Animated one takes over
+        await SplashScreen.hideAsync();
+      }
+    }
+    prepare();
+  }, []);
+
+  // --- NOTIFICATION ENGINE EFFECT ---
+  useEffect(() => {
     if (Platform.OS === "android") {
       Notifications.setNotificationChannelAsync("default", {
         name: "default",
@@ -39,7 +66,14 @@ export default function RootLayout() {
       });
     }
 
-    // Request permissions (Crucial for Android 13+)
+    Notifications.setNotificationChannelAsync("prayer-channel-live", {
+      name: "Prayer Alerts",
+      importance: Notifications.AndroidImportance.MAX,
+      sound: "azan.wav", // <--- This explicitly links your custom sound
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: "#10B981",
+    });
+
     const requestPermissions = async () => {
       const { status: existingStatus } =
         await Notifications.getPermissionsAsync();
@@ -56,35 +90,16 @@ export default function RootLayout() {
     requestPermissions();
     setupNotificationCategories();
 
-    // --- THE UPGRADED "ACKNOWLEDGE" ENGINE ---
     const responseListener =
       Notifications.addNotificationResponseReceivedListener(
         async (response) => {
           const actionId = response.actionIdentifier;
-          const data = response.notification.request.content.data as any;
 
-          if (actionId === "ACKNOWLEDGE" && data?.eventId) {
-            console.log(
-              `User acknowledged! Sweeping and deleting all future alarms for ${data.eventId}`,
-            );
-
-            // 1. INSTANTLY DISMISS the notification from the tray (Triggers the cool slide-away OS animation)
+          // Since alarms are now remote, we just dismiss the current notification
+          if (actionId === "ACKNOWLEDGE") {
             await Notifications.dismissNotificationAsync(
               response.notification.request.identifier,
             );
-
-            // 2. Find ALL scheduled alarms on the phone
-            const scheduled =
-              await Notifications.getAllScheduledNotificationsAsync();
-
-            // 3. Loop through and delete any that match this specific task/class sequence
-            for (const notif of scheduled) {
-              if (notif.identifier.startsWith(data.eventId)) {
-                await Notifications.cancelScheduledNotificationAsync(
-                  notif.identifier,
-                );
-              }
-            }
           }
         },
       );
@@ -94,12 +109,38 @@ export default function RootLayout() {
     };
   }, []);
 
+  // THE ULTIMATE FABRIC CRASH SHIELD:
+  // The layout tree never changes structure, completely avoiding the "null child" crash.
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="login" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <View style={{ flex: 1, backgroundColor: "#000000" }}>
+      {/* 1. Main App Navigation */}
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+
+      {/* 2. Permanent Splash Screen Wrapper */}
+      <View
+        style={[
+          {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "#000000",
+          },
+          // CRITICAL: Use opacity instead of display: none to maintain native layout nodes
+          splashAnimationDone ? { opacity: 0 } : { opacity: 1 },
+        ]}
+        pointerEvents={splashAnimationDone ? "none" : "auto"}
+      >
+        <AnimatedSplashScreen
+          onAnimationComplete={() => setSplashAnimationDone(true)}
+        />
+      </View>
+    </View>
   );
 }
 

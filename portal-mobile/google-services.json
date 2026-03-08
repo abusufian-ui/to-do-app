@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "41123010196",
+    "project_id": "myportal-23eba",
+    "storage_bucket": "myportal-23eba.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:41123010196:android:8ceabeb67ad3aeab9c0681",
+        "android_client_info": {
+          "package_name": "com.abusufian.portalmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDb8yP0UGQYXSKwWn4ZH_PidqZiJDgXvWo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

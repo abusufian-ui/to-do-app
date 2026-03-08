@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import * as Notifications from "expo-notifications";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,45 +18,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // IMPORT YOUR CUSTOM UCP LOGO
 import UCPLogo from "../../components/UCPLogo";
-
-// --- SMART SCHEDULING ENGINE ---
-export async function scheduleSmartAlert(
-  title: string,
-  body: string,
-  exactDate: Date,
-  eventId: string,
-  type: "task" | "class",
-) {
-  const offsetMinutes = type === "task" ? 15 : 5;
-  const warningDate = new Date(exactDate.getTime() - offsetMinutes * 60000);
-
-  if (warningDate > new Date()) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: `${eventId}-warning`,
-      content: {
-        title: `⏳ Upcoming: ${title}`,
-        body: body,
-        categoryIdentifier: "smart-alert",
-        data: { eventId, type: "warning" },
-        sound: true,
-      },
-      trigger: { date: warningDate, channelId: "default" } as any, // <--- THE FIX
-    });
-  }
-
-  if (exactDate > new Date()) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: `${eventId}-exact`,
-      content: {
-        title: `🔴 NOW: ${title}`,
-        body: `It's time to start!`,
-        data: { eventId, type: "exact" },
-        sound: true,
-      },
-      trigger: { date: exactDate, channelId: "default" } as any, // <--- THE FIX
-    });
-  }
-}
 
 // --- Pure Monochrome Theme ---
 const Colors = {
@@ -149,51 +109,6 @@ export default function ClassesScreen() {
     [key: string]: boolean;
   }>({});
 
-  // --- BIND ALARMS FOR TODAY'S CLASSES ---
-  const syncClassNotifications = async (timetableList: any[]) => {
-    const generalNotifs = await AsyncStorage.getItem("generalNotifs");
-    if (generalNotifs !== "true") return;
-
-    const todayStr = new Date().toLocaleDateString("en-US", {
-      weekday: "long",
-    });
-    const todaysClasses = timetableList.filter(
-      (c) => c.day && c.day.toLowerCase() === todayStr.toLowerCase(),
-    );
-
-    for (const session of todaysClasses) {
-      if (!session.startTime) continue;
-      try {
-        // Parse time formats like "09:00 AM" or "14:30"
-        const timeMatch = session.startTime.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-        if (timeMatch) {
-          let hours = parseInt(timeMatch[1], 10);
-          const minutes = parseInt(timeMatch[2], 10);
-          const modifier = timeMatch[3];
-          if (modifier && modifier.toUpperCase() === "PM" && hours < 12)
-            hours += 12;
-          if (modifier && modifier.toUpperCase() === "AM" && hours === 12)
-            hours = 0;
-
-          const exactDate = new Date();
-          exactDate.setHours(hours, minutes, 0, 0);
-
-          if (exactDate > new Date()) {
-            await scheduleSmartAlert(
-              session.courseName || session.name,
-              `Class starts in 5 minutes! Room: ${
-                session.room || "TBD"
-              }. Acknowledge to mute final alarm.`,
-              exactDate,
-              `class-${session._id}`,
-              "class",
-            );
-          }
-        }
-      } catch (e) {}
-    }
-  };
-
   const fetchData = async () => {
     try {
       // --- 1. INSTANT OFFLINE LOAD ---
@@ -240,9 +155,6 @@ export default function ClassesScreen() {
         const freshTimetable = results[1].value.data || [];
         setTimetable(freshTimetable);
         AsyncStorage.setItem("off_acad_time", JSON.stringify(freshTimetable));
-
-        // 4. Sync Alarms automatically
-        syncClassNotifications(freshTimetable);
       }
       if (results[2].status === "fulfilled") {
         setGrades(
@@ -883,8 +795,6 @@ export default function ClassesScreen() {
           {SUB_TABS.map((tab) => {
             const isActive = activeTab === tab.id;
 
-            // Logic: If active, use inverted text color (White in dark mode, Black in light mode).
-            // If inactive, use the subtext color (Gray).
             const iconColor = isActive ? theme.invertedText : theme.subtext;
 
             return (
@@ -1186,7 +1096,7 @@ const getStyles = (theme: any) =>
     gradePill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
     historyGrade: { fontSize: 16, fontWeight: "900" },
 
-    // --- TIMETABLE / COURSES SHARED (Preserved) ---
+    // --- TIMETABLE / COURSES SHARED ---
     daySelectorContainer: { paddingHorizontal: 24, gap: 10, paddingBottom: 25 },
     dayPill: {
       paddingHorizontal: 20,

@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -169,6 +170,7 @@ export default function SettingsScreen() {
     }
   };
 
+  // --- UPDATED SERVER SYNC LOGIC ---
   const toggleGeneralNotifs = async (value: boolean) => {
     if (value) {
       const granted = await requestNotificationPermission();
@@ -176,17 +178,51 @@ export default function SettingsScreen() {
         setGeneralNotifs(false);
         return;
       }
-      Alert.alert(
-        "General Alerts Enabled",
-        "You will now be notified 5 mins before classes and 15 mins before tasks.",
-      );
+
+      try {
+        const projectId =
+          Constants.expoConfig?.extra?.eas?.projectId || "YOUR_PROJECT_ID_HERE";
+        const pushTokenString = (
+          await Notifications.getExpoPushTokenAsync({ projectId })
+        ).data;
+
+        const token = await AsyncStorage.getItem("userToken");
+        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+
+        if (token && BACKEND_URL) {
+          await axios.post(
+            `${BACKEND_URL}/user/push-token`,
+            { token: pushTokenString },
+            { headers: { "x-auth-token": token } },
+          );
+        }
+
+        Alert.alert(
+          "General Alerts Enabled",
+          "You will now be notified 15 mins before tasks via the server.",
+        );
+      } catch (e) {
+        console.error("Failed to register token", e);
+        Alert.alert("Error", "Could not connect to notification server.");
+        setGeneralNotifs(false);
+        return;
+      }
     } else {
-      // IF THEY TURN IT OFF: Wipe out all pending alarms
+      try {
+        const token = await AsyncStorage.getItem("userToken");
+        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+        if (token && BACKEND_URL) {
+          await axios.post(
+            `${BACKEND_URL}/user/push-token`,
+            { token: null },
+            { headers: { "x-auth-token": token } },
+          );
+        }
+      } catch (e) {
+        console.error("Failed to remove token", e);
+      }
       await Notifications.cancelAllScheduledNotificationsAsync();
-      Alert.alert(
-        "Alerts Muted",
-        "All scheduled task and class alarms have been cleared.",
-      );
+      Alert.alert("Alerts Muted", "Server alerts have been disabled.");
     }
     setGeneralNotifs(value);
     await AsyncStorage.setItem("generalNotifs", value ? "true" : "false");
@@ -201,9 +237,25 @@ export default function SettingsScreen() {
       }
       Alert.alert(
         "Prayer Alerts Enabled",
-        "You will now receive reminders for all 5 daily prayers.",
+        "You will now receive server-synced reminders for all 5 daily prayers.",
       );
     }
+
+    // Tell the backend about the preference change
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      if (token && BACKEND_URL) {
+        await axios.put(
+          `${BACKEND_URL}/user/preferences`,
+          { prayerNotifs: value },
+          { headers: { "x-auth-token": token } },
+        );
+      }
+    } catch (e) {
+      console.error("Failed to sync prayer preference", e);
+    }
+
     setPrayerNotifs(value);
     await AsyncStorage.setItem("prayerNotifs", value ? "true" : "false");
   };
@@ -225,7 +277,6 @@ export default function SettingsScreen() {
             const cacheKeys = keys.filter((k) => k.startsWith("off_"));
             await AsyncStorage.multiRemove(cacheKeys);
 
-            // Clear alarms on logout just to be safe
             await Notifications.cancelAllScheduledNotificationsAsync();
 
             if (router.canDismiss()) {
@@ -241,8 +292,6 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* The custom header block has been removed, and the manual padding is gone */}
-
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.text} />

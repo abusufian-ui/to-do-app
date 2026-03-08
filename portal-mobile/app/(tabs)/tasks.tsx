@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import axios from "axios";
-import * as Notifications from "expo-notifications";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -50,96 +49,6 @@ const Colors = {
     success: "#34D399",
   },
 };
-
-// --- NEW TASK SCHEDULING ENGINE ---
-export async function scheduleTaskAlerts(
-  taskName: string,
-  taskDateStr: string,
-  taskTimeStr: string,
-  eventId: string,
-) {
-  const now = new Date();
-  const baseConfig = {
-    categoryIdentifier: "smart-alert",
-    data: { eventId },
-    sound: true,
-    color: "#10B981", // Native icon tint
-  };
-  const [year, month, day] = taskDateStr.split("-");
-
-  if (taskTimeStr) {
-    const timeMatch = taskTimeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-    if (!timeMatch) return;
-    let hours = parseInt(timeMatch[1], 10);
-    const minutes = parseInt(timeMatch[2], 10);
-    const modifier = timeMatch[3];
-    if (modifier && modifier.toUpperCase() === "PM" && hours < 12) hours += 12;
-    if (modifier && modifier.toUpperCase() === "AM" && hours === 12) hours = 0;
-
-    const exactDate = new Date(
-      parseInt(year),
-      parseInt(month) - 1,
-      parseInt(day),
-      hours,
-      minutes,
-      0,
-      0,
-    );
-    const warningDate = new Date(exactDate.getTime() - 15 * 60000);
-
-    if (warningDate > now) {
-      await Notifications.scheduleNotificationAsync({
-        identifier: `${eventId}-warning`,
-        content: {
-          ...baseConfig,
-          title: `⏳ Task Upcoming`,
-          body: `${taskName} Task is scheduled for ${taskTimeStr}`,
-        },
-        trigger: { date: warningDate, channelId: "default" } as any,
-      });
-    }
-
-    const followUps = [0, 30, 60];
-    for (let i = 0; i < followUps.length; i++) {
-      const triggerDate = new Date(exactDate.getTime() + followUps[i] * 60000);
-      if (triggerDate > now) {
-        await Notifications.scheduleNotificationAsync({
-          identifier: `${eventId}-followup-${i}`,
-          content: {
-            ...baseConfig,
-            title: `📌 Task Reminder`,
-            body: `You have the task for ${taskTimeStr} today please check on it`,
-          },
-          trigger: { date: triggerDate, channelId: "default" } as any,
-        });
-      }
-    }
-  } else {
-    const hoursToRemind = [9, 11, 13, 15, 17, 19, 21];
-    for (let i = 0; i < hoursToRemind.length; i++) {
-      const triggerDate = new Date(
-        parseInt(year),
-        parseInt(month) - 1,
-        parseInt(day),
-        hoursToRemind[i],
-        0,
-        0,
-        0,
-      );
-      if (triggerDate > now) {
-        await Notifications.scheduleNotificationAsync({
-          identifier: `${eventId}-notime-${i}`,
-          content: {
-            ...baseConfig,
-            title: `📅 Today's Task`,
-            body: `You have the task "${taskName}" assigned for today please check on it`,
-          },
-          trigger: { date: triggerDate, channelId: "default" } as any,
-        });
-      }
-    }
-  }
-}
 
 const getPriorityConfig = (priority: string) => {
   switch (priority) {
@@ -239,9 +148,6 @@ export default function TasksScreen() {
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
-  const [expandedTasks, setExpandedTasks] = useState<{
-    [key: string]: boolean;
-  }>({});
 
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [isEditingTask, setIsEditingTask] = useState(false);
@@ -249,7 +155,6 @@ export default function TasksScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  // --- NEW: SMART COURSE ICON RENDERER ---
   const renderCourseIcon = (
     courseName: string,
     size = 16,
@@ -329,26 +234,6 @@ export default function TasksScreen() {
     return filters;
   }, []);
 
-  const syncTaskNotifications = async (tasksList: any[]) => {
-    try {
-      const generalNotifs = await AsyncStorage.getItem("generalNotifs");
-      if (generalNotifs !== "true") return;
-
-      const active = tasksList.filter((t) => !t.completed && t.date);
-
-      for (const task of active) {
-        await scheduleTaskAlerts(
-          task.name,
-          task.date,
-          task.time,
-          `task-${task._id}`,
-        );
-      }
-    } catch (e) {
-      console.log("Error scheduling task notification", e);
-    }
-  };
-
   const loadDataAndSync = async () => {
     try {
       const [cTasks, cCourses, cTimetable, cQueue] = await Promise.all([
@@ -372,7 +257,6 @@ export default function TasksScreen() {
       if (cTasks) {
         const mergedCache = [...JSON.parse(cTasks), ...offlineAdds];
         setTasks(mergedCache);
-        syncTaskNotifications(mergedCache);
       }
 
       if (cCourses) setCourses(JSON.parse(cCourses));
@@ -401,7 +285,6 @@ export default function TasksScreen() {
 
       const mergedFresh = [...taskRes.data, ...remainingOfflineAdds];
       setTasks(mergedFresh);
-      syncTaskNotifications(mergedFresh);
 
       setCourses(courseRes.data);
       setTimetable(ttRes.data);
@@ -487,20 +370,6 @@ export default function TasksScreen() {
       JSON.stringify(updatedTasks.filter((t) => !t.isUnsynced)),
     );
     queueAction("UPDATE", taskId, updateData);
-
-    if (updateData.status === "Completed" || updateData.completed === true) {
-      (async () => {
-        const scheduled =
-          await Notifications.getAllScheduledNotificationsAsync();
-        for (const notif of scheduled) {
-          if (notif.identifier.startsWith(`task-${taskId}`)) {
-            await Notifications.cancelScheduledNotificationAsync(
-              notif.identifier,
-            );
-          }
-        }
-      })();
-    }
   };
 
   const handleStatusChange = (taskId: string, newStatus: string) => {
@@ -536,18 +405,6 @@ export default function TasksScreen() {
           taskId: id,
         }));
         await queueBulkActions(deleteActions);
-
-        const scheduled =
-          await Notifications.getAllScheduledNotificationsAsync();
-        for (const id of selectedTaskIds) {
-          for (const notif of scheduled) {
-            if (notif.identifier.startsWith(`task-${id}`)) {
-              await Notifications.cancelScheduledNotificationAsync(
-                notif.identifier,
-              );
-            }
-          }
-        }
 
         setIsSelectionMode(false);
         setSelectedTaskIds([]);
@@ -703,7 +560,6 @@ export default function TasksScreen() {
 
         <View style={styles.metaContainer}>
           <View style={styles.metaPill}>
-            {/* DYNAMIC UCP ICON INJECTED HERE */}
             {renderCourseIcon(task.course, 12, theme.subtext)}
             <Text style={styles.metaText} numberOfLines={1}>
               {task.course || "General"}
@@ -1014,34 +870,44 @@ export default function TasksScreen() {
                   </View>
 
                   <View style={styles.summaryGrid}>
-                    <View style={styles.summaryGridItem}>
+                    <View style={[styles.summaryGridItem, { width: "100%" }]}>
                       <Text style={styles.gridLabel}>Course</Text>
                       <View
                         style={{
                           flexDirection: "row",
-                          alignItems: "center",
+                          alignItems: "flex-start",
                           gap: 6,
                           marginTop: 4,
                         }}
                       >
-                        {/* DYNAMIC UCP ICON INJECTED HERE */}
-                        {renderCourseIcon(
-                          selectedTask?.course,
-                          14,
-                          theme.subtext,
-                        )}
-                        <Text style={styles.gridValue}>
+                        <View style={{ marginTop: 2 }}>
+                          {/* Micro-adjustment to align icon with text baseline */}
+                          {/* DYNAMIC UCP ICON INJECTED HERE */}
+                          {renderCourseIcon(
+                            selectedTask?.course,
+                            14,
+                            theme.subtext,
+                          )}
+                        </View>
+                        <Text
+                          style={[
+                            styles.gridValue,
+                            { flexShrink: 1, marginTop: 0 },
+                          ]}
+                        >
                           {selectedTask?.course || "General"}
                         </Text>
                       </View>
                     </View>
-                    <View style={styles.summaryGridItem}>
+
+                    <View style={[styles.summaryGridItem, { width: "100%" }]}>
                       <Text style={styles.gridLabel}>Date & Time</Text>
                       <Text style={styles.gridValue}>
                         {formatDate(selectedTask?.date)}{" "}
                         {selectedTask?.time ? `• ${selectedTask?.time}` : ""}
                       </Text>
                     </View>
+
                     <View style={styles.summaryGridItem}>
                       <Text style={styles.gridLabel}>Priority</Text>
                       <Text
@@ -1056,6 +922,7 @@ export default function TasksScreen() {
                         {selectedTask?.priority}
                       </Text>
                     </View>
+
                     <View style={styles.summaryGridItem}>
                       <Text style={styles.gridLabel}>Status</Text>
                       <Text

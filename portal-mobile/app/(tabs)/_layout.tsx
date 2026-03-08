@@ -168,6 +168,10 @@ export default function TabLayout() {
           options={{ href: null, title: "Cash Manager" }}
         />
         <Tabs.Screen name="notes" options={{ href: null, title: "Notes" }} />
+        <Tabs.Screen
+          name="KeynotesScreen"
+          options={{ href: null, title: "Keynotes" }}
+        />
       </Tabs>
 
       <Modal visible={menuVisible} transparent animationType="fade">
@@ -243,6 +247,16 @@ export default function TabLayout() {
                 />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
                   Notes
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => navigateFromMenu("/KeynotesScreen")}
+              >
+                <Ionicons name="bulb-outline" size={22} color={theme.text} />
+                <Text style={[styles.menuItemText, { color: theme.text }]}>
+                  Keynotes
                 </Text>
               </TouchableOpacity>
 
