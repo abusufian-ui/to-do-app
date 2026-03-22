@@ -25,7 +25,7 @@ import {
   TextInput,
   TouchableOpacity,
   useColorScheme,
-  View
+  View,
 } from "react-native";
 
 import UCPLogo from "../../components/UCPLogo";
@@ -71,19 +71,22 @@ const TAB_DATA: TabItem[] = [
 
 const EXPENSE_CATEGORIES = [
   { id: "Food & Dining", icon: "restaurant-outline" },
-  { id: "Transportation", icon: "car-outline" },
+  { id: "Transportation & Fuel", icon: "car-outline" },
+  { id: "Maintenance", icon: "build-outline" },
   { id: "Shopping", icon: "cart-outline" },
+  { id: "Online Subscriptions", icon: "globe-outline" },
   { id: "Education", icon: "book-outline" },
   { id: "Bills & Utilities", icon: "flash-outline" },
   { id: "Debt Payoff", icon: "wallet-outline" },
   { id: "Entertainment", icon: "game-controller-outline" },
+  { id: "Legal Payments", icon: "briefcase-outline" },
   { id: "Other", icon: "gift-outline" },
 ];
 
 const INCOME_CATEGORIES = [
   { id: "Salary", icon: "cash-outline" },
   { id: "Freelance", icon: "laptop-outline" },
-  { id: "Investments", icon: "trending-up-outline" },
+  { id: "Investments & Return", icon: "trending-up-outline" },
   { id: "Loan Recovery", icon: "wallet-outline" },
   { id: "Gifts & Grants", icon: "gift-outline" },
   { id: "Other Income", icon: "add-outline" },
@@ -242,12 +245,9 @@ export default function AddScreen({ navigation }: any) {
   }, [tType]);
 
   const eligibleDebts = useMemo(() => {
-    const numAmount = parseFloat(tAmount) || 0;
     const requiredDebtType = tType === "income" ? "lent" : "borrowed";
-    return activeDebts.filter(
-      (d) => d.type === requiredDebtType && d.amount >= numAmount,
-    );
-  }, [tAmount, tType, activeDebts]);
+    return activeDebts.filter((d) => d.type === requiredDebtType);
+  }, [tType, activeDebts]);
 
   const isDebtCategory =
     tCategory === "Debt Payoff" || tCategory === "Loan Recovery";
@@ -376,7 +376,6 @@ export default function AddScreen({ navigation }: any) {
     }
   };
 
-  // --- MEDIA HANDLERS ---
   const handleSnap = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted")
@@ -489,6 +488,7 @@ export default function AddScreen({ navigation }: any) {
       if (activeTab === "transaction") {
         if (!tAmount || !tDesc)
           return showToast("Please enter amount and description.", "error");
+
         const payload = {
           type: tType,
           amount: Number(tAmount),
@@ -496,11 +496,28 @@ export default function AddScreen({ navigation }: any) {
           description: tDesc,
           date: tDate,
         };
+
         try {
           if (isDebtCategory && selectedDebt) {
+            // FIX 1: Detect partial payment and append to description
+            const isPartial = payload.amount < selectedDebt.amount;
+            const prefix = isPartial
+              ? tType === "income"
+                ? "Partial Earning: "
+                : "Partial Payment: "
+              : "Settled: ";
+            const finalDescription = `${prefix}${selectedDebt.person} - ${payload.description}`;
+
+            // FIX 2: Send ALL required transaction data to the backend pay route
             await axios.post(
               `${BACKEND_URL}/debts/${selectedDebt._id}/pay`,
-              { amount: payload.amount, date: payload.date },
+              {
+                amount: payload.amount,
+                date: payload.date,
+                type: payload.type,
+                category: payload.category,
+                description: finalDescription,
+              },
               { headers },
             );
             showToast("Linked Payment recorded!", "success");
@@ -511,13 +528,18 @@ export default function AddScreen({ navigation }: any) {
             showToast("Cash logged successfully!", "success");
           }
           await fetchInitialData();
-        } catch (e) {
+        } catch (e: any) {
+          if (e.response && e.response.status === 400) {
+            return showToast(
+              e.response.data.message || "Invalid amount.",
+              "error",
+            );
+          }
           saveOfflineQueue("ADD", "/transactions", payload);
         }
       } else if (activeTab === "task") {
         if (!taskTitle) return showToast("Task Title is required.", "error");
 
-        // Prepare server trigger date
         const triggerDate = new Date(taskDateObj);
         triggerDate.setHours(taskTimeObj.getHours());
         triggerDate.setMinutes(taskTimeObj.getMinutes());
@@ -846,6 +868,7 @@ export default function AddScreen({ navigation }: any) {
                         : theme.subtext
                     }
                   />
+                  {/* FIX 3: Removed numberOfLines={1} to allow wrapping */}
                   <Text
                     style={[
                       styles.gridItemText,
@@ -854,7 +877,6 @@ export default function AddScreen({ navigation }: any) {
                           tType === "expense" ? theme.brand : theme.success,
                       },
                     ]}
-                    numberOfLines={1}
                   >
                     {cat.id}
                   </Text>
@@ -900,8 +922,8 @@ export default function AddScreen({ navigation }: any) {
                   </TouchableOpacity>
                 ) : (
                   <Text style={styles.warningText}>
-                    <Ionicons name="information-circle" size={12} /> Amount
-                    exceeds active records, or none exist.
+                    <Ionicons name="information-circle" size={12} /> No active
+                    records found for this category.
                   </Text>
                 )}
               </View>
@@ -1463,6 +1485,60 @@ export default function AddScreen({ navigation }: any) {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* --- DEBT MODAL --- */}
+      <Modal visible={showDebtModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View
+            style={[styles.modalContent, { backgroundColor: theme.background }]}
+          >
+            <Text style={styles.modalTitle}>Select a Record</Text>
+            <Text style={styles.modalSub}>
+              Which {tType === "income" ? "loan" : "debt"} are you settling?
+            </Text>
+            <ScrollView style={{ maxHeight: 300, marginBottom: 10 }}>
+              {eligibleDebts.map((debt) => (
+                <TouchableOpacity
+                  key={debt._id}
+                  style={styles.debtItem}
+                  onPress={() => {
+                    setSelectedDebt(debt);
+                    setShowDebtModal(false);
+                    // Helpful feature: Autofill amount if not typed yet
+                    if (!tAmount) setTAmount(debt.amount.toString());
+                  }}
+                >
+                  <View>
+                    <Text style={styles.debtItemName}>{debt.person}</Text>
+                    <Text style={styles.debtItemDate}>
+                      {debt.description || "No description"}
+                    </Text>
+                  </View>
+                  <Text style={[styles.debtItemAmount, { color: theme.brand }]}>
+                    Rs {debt.amount.toLocaleString()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={[
+                styles.saveBtn,
+                {
+                  marginTop: 10,
+                  backgroundColor: theme.card,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                },
+              ]}
+              onPress={() => setShowDebtModal(false)}
+            >
+              <Text style={[styles.saveBtnText, { color: theme.text }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1529,15 +1605,18 @@ const getStyles = (theme: any) =>
       backgroundColor: theme.brand + "15",
     },
     chipText: { fontSize: 13, fontWeight: "700", color: theme.subtext },
-    gridContainer: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    gridContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    // FIX 4: Updated grid item constraints for multi-line support
     gridItem: {
-      width: "30%",
+      width: "31%",
       backgroundColor: theme.card,
       borderWidth: 1,
       borderColor: theme.border,
       borderRadius: 12,
-      padding: 12,
+      padding: 8,
       alignItems: "center",
+      justifyContent: "center",
+      minHeight: 85,
       gap: 6,
     },
     gridItemText: {
@@ -1545,6 +1624,7 @@ const getStyles = (theme: any) =>
       fontWeight: "600",
       color: theme.text,
       textAlign: "center",
+      lineHeight: 14,
     },
     dropdownBtn: {
       flexDirection: "row",
