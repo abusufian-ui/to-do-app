@@ -28,9 +28,16 @@ async function setupNotificationCategories() {
     {
       identifier: "ACKNOWLEDGE",
       buttonTitle: "Got it! 👍",
-      options: {
-        opensAppToForeground: false, // Completes action silently in the background!
-      },
+      options: { opensAppToForeground: false },
+    },
+  ]);
+
+  // ADD THIS FOR NAMAZ
+  await Notifications.setNotificationCategoryAsync("prayer-alert", [
+    {
+      identifier: "OFFER_PRAYER",
+      buttonTitle: "Offer Prayer Now 🤲",
+      options: { opensAppToForeground: false }, // Silent background action
     },
   ]);
 }
@@ -120,6 +127,32 @@ export default function RootLayout() {
                 }
               } catch (error) {
                 console.log("Failed to acknowledge task", error);
+              }
+            }
+          } else if (actionId === "OFFER_PRAYER") {
+            // Dismiss notification
+            await Notifications.dismissNotificationAsync(
+              response.notification.request.identifier,
+            );
+
+            const prayerName =
+              response.notification.request.content.data?.prayerName;
+            if (prayerName) {
+              try {
+                const token = await AsyncStorage.getItem("userToken");
+                const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+                if (token && BACKEND_URL) {
+                  await axios.post(
+                    `${BACKEND_URL}/namaz/offer`,
+                    { prayerName },
+                    { headers: { "x-auth-token": token } },
+                  );
+                  console.log(
+                    `${prayerName} marked as offered via push notification!`,
+                  );
+                }
+              } catch (error) {
+                console.log("Failed to log prayer", error);
               }
             }
           }

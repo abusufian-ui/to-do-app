@@ -14,9 +14,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-// Unified Theme Colors
 const Colors = {
   light: {
     background: "#FFFFFF",
@@ -25,11 +23,11 @@ const Colors = {
     border: "#E5E5E5",
     card: "#FAFAFA",
     invertedBg: "#000000",
-    invertedText: "#FFFFFF",
     brand: "#3B82F6",
     success: "#10B981",
     danger: "#F43F5E",
     warning: "#F59E0B",
+    qazah: "#8B5CF6",
   },
   dark: {
     background: "#000000",
@@ -38,11 +36,11 @@ const Colors = {
     border: "#262626",
     card: "#0A0A0A",
     invertedBg: "#FFFFFF",
-    invertedText: "#000000",
     brand: "#60A5FA",
     success: "#34D399",
     danger: "#FB7185",
     warning: "#FBBF24",
+    qazah: "#A78BFA",
   },
 };
 
@@ -59,7 +57,6 @@ const NAMAZ_PRAYERS = [
   { id: "isha", name: "Isha", icon: "moon", color: "#60A5FA" },
 ];
 
-// --- HELPER: LIVE TIMER ---
 const LiveTimer = ({ startDate }: { startDate: string }) => {
   const [time, setTime] = useState({ days: 0, hours: 0, mins: 0, secs: 0 });
 
@@ -123,7 +120,6 @@ const stylesStatic = StyleSheet.create({
   },
 });
 
-// --- HELPER LOGIC ---
 const isThisWeek = (dateString: string) => {
   const date = new Date(dateString);
   const now = new Date();
@@ -134,6 +130,14 @@ const isThisWeek = (dateString: string) => {
   );
   startOfWeek.setHours(0, 0, 0, 0);
   return date >= startOfWeek;
+};
+
+const isWithinLast7Days = (dateString: string) => {
+  if (!dateString) return false;
+  const date = new Date(dateString).getTime();
+  const now = new Date().getTime();
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  return now - date <= sevenDays;
 };
 
 const calculateStreak = (checkIns: string[]) => {
@@ -154,14 +158,13 @@ const calculateStreak = (checkIns: string[]) => {
   return streak;
 };
 
-// --- MAIN COMPONENT ---
 export default function HabitsScreen() {
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
-  const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab] = useState<"namaz" | "good" | "bad">("namaz");
   const [habits, setHabits] = useState<any[]>([]);
+  const [namazRecord, setNamazRecord] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -175,44 +178,33 @@ export default function HabitsScreen() {
     btnColor: "",
   });
 
-  const fetchHabits = async () => {
+  const fetchData = async () => {
     try {
-      const cHabits = await AsyncStorage.getItem("off_habits_data");
-      if (cHabits) {
-        setHabits(JSON.parse(cHabits));
-        setIsLoading(false);
-      }
-
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
+
+      const cHabits = await AsyncStorage.getItem("off_habits_data");
+      const cNamaz = await AsyncStorage.getItem("off_namaz_data");
+
+      if (cHabits) setHabits(JSON.parse(cHabits));
+      if (cNamaz) setNamazRecord(JSON.parse(cNamaz));
+
       if (!BACKEND_URL || !token) return setIsLoading(false);
 
-      const res = await axios.get(`${BACKEND_URL}/habits`, {
-        headers: { "x-auth-token": token },
-      });
-
-      let data = Array.isArray(res.data) ? res.data : [];
-      let hasNamaz = data.some((h) => h.name === "Daily Namaz");
-
-      if (!hasNamaz) {
-        const payload = {
-          name: "Daily Namaz",
-          type: "good",
-          targetPerDay: 5,
-          targetPerWeek: 7,
-        };
-        const createRes = await axios.post(`${BACKEND_URL}/habits`, payload, {
+      const [habitsRes, namazRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/habits`, {
           headers: { "x-auth-token": token },
-        });
-        data = [createRes.data, ...data];
-      }
+        }),
+        axios.get(`${BACKEND_URL}/namaz/today`, {
+          headers: { "x-auth-token": token },
+        }),
+      ]);
 
-      const taggedData = data.map((h) => ({
-        ...h,
-        isSystemNamaz: h.name === "Daily Namaz",
-      }));
-      setHabits(taggedData);
-      AsyncStorage.setItem("off_habits_data", JSON.stringify(taggedData));
+      setHabits(Array.isArray(habitsRes.data) ? habitsRes.data : []);
+      setNamazRecord(namazRes.data);
+
+      AsyncStorage.setItem("off_habits_data", JSON.stringify(habitsRes.data));
+      AsyncStorage.setItem("off_namaz_data", JSON.stringify(namazRes.data));
     } catch (error) {
       console.log("Offline mode active.");
     } finally {
@@ -222,11 +214,38 @@ export default function HabitsScreen() {
   };
 
   useEffect(() => {
-    fetchHabits();
+    fetchData();
   }, []);
 
-  const executeAction = async (action: string, id: string) => {
+  const handleNamazAction = async (prayerName: string) => {
     try {
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      const token = await AsyncStorage.getItem("userToken");
+
+      // Optmistic Update
+      const oldRecord = { ...namazRecord };
+      const tempRecord = { ...namazRecord };
+      if (tempRecord.prayers[prayerName] === "pending")
+        tempRecord.prayers[prayerName] = "offered";
+      else tempRecord.prayers[prayerName] = "qazah";
+      setNamazRecord(tempRecord);
+
+      const res = await axios.post(
+        `${BACKEND_URL}/namaz/offer`,
+        { prayerName },
+        { headers: { "x-auth-token": token } },
+      );
+      setNamazRecord(res.data);
+      AsyncStorage.setItem("off_namaz_data", JSON.stringify(res.data));
+    } catch (error) {
+      Alert.alert("Error", "Could not log prayer.");
+      fetchData(); // Rollback
+    }
+  };
+
+  const executeHabitAction = async (action: string, id: string) => {
+    try {
+      // 1. Instantly update the UI so it doesn't get stuck waiting
       if (action === "checkin") {
         setHabits((prev) =>
           prev.map((h) =>
@@ -238,8 +257,28 @@ export default function HabitsScreen() {
               : h,
           ),
         );
+      } else if (action === "cheat") {
+        setHabits((prev) =>
+          prev.map((h) =>
+            h._id === id
+              ? {
+                  ...h,
+                  cheatDays: [...(h.cheatDays || []), new Date().toISOString()],
+                }
+              : h,
+          ),
+        );
+      } else if (action === "reset") {
+        setHabits((prev) =>
+          prev.map((h) =>
+            h._id === id
+              ? { ...h, startDate: new Date().toISOString(), cheatDays: [] }
+              : h,
+          ),
+        );
       }
 
+      // 2. Send to backend silently
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
       await axios.put(
@@ -248,22 +287,19 @@ export default function HabitsScreen() {
         { headers: { "x-auth-token": token } },
       );
 
-      fetchHabits();
+      fetchData();
     } catch (error) {
       Alert.alert("Error", `Failed to log progress.`);
-      fetchHabits();
     }
   };
 
-  const namazHabit = habits.find((h) => h.isSystemNamaz);
   const goodHabits = habits.filter(
-    (h) => h.type === "good" && !h.isSystemNamaz,
+    (h) => h.type === "good" && h.name !== "Daily Namaz",
   );
   const badHabits = habits.filter((h) => h.type === "bad");
 
   return (
     <View style={styles.container}>
-      {/* --- CONFIRMATION MODAL --- */}
       <Modal visible={confirmModal.visible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
@@ -292,7 +328,7 @@ export default function HabitsScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
-                  executeAction(confirmModal.action, confirmModal.habitId);
+                  executeHabitAction(confirmModal.action, confirmModal.habitId);
                   setConfirmModal({ ...confirmModal, visible: false });
                 }}
                 style={[
@@ -354,18 +390,17 @@ export default function HabitsScreen() {
               refreshing={refreshing}
               onRefresh={() => {
                 setRefreshing(true);
-                fetchHabits();
+                fetchData();
               }}
               tintColor={theme.text}
             />
           }
         >
           {activeTab === "namaz" &&
-            namazHabit &&
+            namazRecord &&
             (() => {
-              const today = new Date().setHours(0, 0, 0, 0);
-              const checksToday = (namazHabit.checkIns || []).filter(
-                (d: string) => new Date(d).setHours(0, 0, 0, 0) === today,
+              const offeredCount = Object.values(namazRecord.prayers).filter(
+                (s) => s === "offered" || s === "qazah",
               ).length;
 
               return (
@@ -384,28 +419,63 @@ export default function HabitsScreen() {
                     </Text>
                     <View style={styles.namazBadge}>
                       <Text style={styles.namazBadgeText}>
-                        {checksToday} / 5 Completed Today
+                        {offeredCount} / 5 Completed Today
                       </Text>
                     </View>
                   </View>
 
-                  {NAMAZ_PRAYERS.map((prayer, idx) => {
-                    const isCompleted = checksToday > idx;
-                    const isNext = checksToday === idx;
+                  {NAMAZ_PRAYERS.map((prayer) => {
+                    const status = namazRecord.prayers[prayer.id] as string;
+
+                    let cardStyle = {};
+                    let iconColor = prayer.color;
+                    let btnText = "Locked";
+                    let btnStyle: any = styles.prayerBtnLocked;
+                    let textColor = theme.text;
+                    let btnTextColor = theme.subtext;
+
+                    if (status === "offered") {
+                      cardStyle = {
+                        backgroundColor: "#10B981",
+                        borderColor: "#059669",
+                      };
+                      iconColor = "#FFF";
+                      textColor = "#FFF";
+                      btnTextColor = "#FFF";
+                      btnText = "Offered";
+                      btnStyle = styles.prayerBtnDone;
+                    } else if (status === "qazah") {
+                      cardStyle = {
+                        backgroundColor: theme.qazah,
+                        borderColor: theme.qazah,
+                      };
+                      iconColor = "#FFF";
+                      textColor = "#FFF";
+                      btnTextColor = "#FFF";
+                      btnText = "Qazah Done";
+                      btnStyle = styles.prayerBtnDone;
+                    } else if (status === "missed") {
+                      cardStyle = { borderColor: theme.danger };
+                      btnText = "Offer Qazah";
+                      btnStyle = styles.prayerBtnMissed;
+                      btnTextColor = "#FFF";
+                    } else if (status === "pending") {
+                      cardStyle = { borderColor: theme.brand };
+                      btnText = "Offer Now";
+                      btnStyle = styles.prayerBtnNext;
+                      btnTextColor = "#FFF";
+                    }
 
                     return (
                       <View
                         key={prayer.id}
-                        style={[
-                          styles.prayerCard,
-                          isCompleted && styles.prayerCardCompleted,
-                        ]}
+                        style={[styles.prayerCard, cardStyle]}
                       >
                         <View style={styles.prayerInfo}>
                           <View
                             style={[
                               styles.prayerIconBox,
-                              isCompleted && {
+                              (status === "offered" || status === "qazah") && {
                                 backgroundColor: "rgba(255,255,255,0.2)",
                               },
                             ]}
@@ -413,44 +483,32 @@ export default function HabitsScreen() {
                             <Ionicons
                               name={prayer.icon as any}
                               size={24}
-                              color={isCompleted ? "#FFF" : prayer.color}
+                              color={iconColor}
                             />
                           </View>
                           <Text
-                            style={[
-                              styles.prayerName,
-                              isCompleted && { color: "#FFF" },
-                            ]}
+                            style={[styles.prayerName, { color: textColor }]}
                           >
                             {prayer.name}
                           </Text>
                         </View>
 
                         <TouchableOpacity
-                          disabled={isCompleted || !isNext}
-                          onPress={() =>
-                            executeAction("checkin", namazHabit._id)
+                          disabled={
+                            status === "offered" ||
+                            status === "qazah" ||
+                            status === "locked"
                           }
-                          style={[
-                            styles.prayerBtn,
-                            isCompleted
-                              ? styles.prayerBtnDone
-                              : isNext
-                                ? styles.prayerBtnNext
-                                : styles.prayerBtnLocked,
-                          ]}
+                          onPress={() => handleNamazAction(prayer.id)}
+                          style={[styles.prayerBtn, btnStyle]}
                         >
                           <Text
                             style={[
                               styles.prayerBtnText,
-                              isCompleted
-                                ? { color: "#FFF" }
-                                : isNext
-                                  ? { color: "#FFF" }
-                                  : { color: theme.subtext },
+                              { color: btnTextColor },
                             ]}
                           >
-                            {isCompleted ? "Completed" : "Offer"}
+                            {btnText}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -572,7 +630,7 @@ export default function HabitsScreen() {
 
                     <TouchableOpacity
                       disabled={isCheckedInToday}
-                      onPress={() => executeAction("checkin", habit._id)}
+                      onPress={() => executeHabitAction("checkin", habit._id)}
                       style={[
                         styles.actionBtnFull,
                         isCheckedInToday ? styles.btnDisabled : styles.btnGood,
@@ -611,7 +669,7 @@ export default function HabitsScreen() {
               badHabits.map((habit) => {
                 const isModeration = habit.strategy === "moderation";
                 const cheatsThisWeek = (habit.cheatDays || []).filter(
-                  isThisWeek,
+                  isWithinLast7Days,
                 ).length;
                 const allowancesLeft = Math.max(
                   0,
@@ -707,7 +765,6 @@ export default function HabitsScreen() {
 const getStyles = (theme: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background, paddingTop: 10 },
-
     tabContainer: {
       flexDirection: "row",
       backgroundColor: theme.card,
@@ -746,7 +803,6 @@ const getStyles = (theme: any) =>
       elevation: 4,
     },
     tabText: { fontSize: 13, fontWeight: "800", color: theme.subtext },
-
     scrollContent: { paddingHorizontal: 24, paddingBottom: 100, gap: 16 },
     loadingContainer: {
       flex: 1,
@@ -767,7 +823,6 @@ const getStyles = (theme: any) =>
       letterSpacing: -0.5,
     },
     animateFade: { opacity: 1 },
-
     namazHero: {
       backgroundColor: "#064E3B",
       padding: 24,
@@ -822,6 +877,7 @@ const getStyles = (theme: any) =>
     prayerName: { fontSize: 18, fontWeight: "800", color: theme.text },
     prayerBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
     prayerBtnNext: { backgroundColor: theme.brand },
+    prayerBtnMissed: { backgroundColor: theme.danger },
     prayerBtnLocked: {
       backgroundColor: theme.background,
       borderWidth: 1,
@@ -829,7 +885,6 @@ const getStyles = (theme: any) =>
     },
     prayerBtnDone: { backgroundColor: "rgba(255,255,255,0.2)" },
     prayerBtnText: { fontSize: 13, fontWeight: "800" },
-
     habitCard: {
       backgroundColor: theme.card,
       borderRadius: 24,
@@ -867,7 +922,6 @@ const getStyles = (theme: any) =>
       color: theme.subtext,
       textTransform: "uppercase",
     },
-
     progressHeaderRow: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -888,7 +942,6 @@ const getStyles = (theme: any) =>
     segment: { flex: 1, borderRadius: 5 },
     progressBarBg: { height: 8, borderRadius: 4, overflow: "hidden" },
     progressBarFill: { height: "100%", borderRadius: 4 },
-
     timerLabel: {
       fontSize: 10,
       fontWeight: "800",
@@ -896,7 +949,6 @@ const getStyles = (theme: any) =>
       letterSpacing: 1,
       marginTop: 4,
     },
-
     badActions: { flexDirection: "row", gap: 10, marginTop: 20 },
     actionBtn: {
       flex: 1,
@@ -925,8 +977,6 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
     },
     btnText: { fontSize: 14, fontWeight: "800" },
-
-    // Modal Styles
     modalOverlay: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.6)",

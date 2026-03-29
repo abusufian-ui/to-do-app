@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react"; // <-- FIXED: useMemo imported
 import {
   ActivityIndicator,
   LayoutAnimation,
+  Linking,
   Platform,
   RefreshControl,
   ScrollView,
@@ -24,6 +25,7 @@ if (
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+// --- Extended Vibrant Theme ---
 const Colors = {
   light: {
     background: "#FFFFFF",
@@ -34,9 +36,18 @@ const Colors = {
     invertedBg: "#000000",
     invertedText: "#FFFFFF",
     invertedSubtext: "#A3A3A3",
-    danger: "#EF4444", // Added missing color
-    brand: "#3B82F6", // Added missing color
-    success: "#10B981", // Added missing color
+    danger: "#EF4444",
+    brand: "#3B82F6",
+    success: "#10B981",
+    // Vibrant Accents
+    emerald: "#10B981",
+    emeraldBg: "#D1FAE5",
+    rose: "#F43F5E",
+    roseBg: "#FFE4E6",
+    amber: "#F59E0B",
+    amberBg: "#FEF3C7",
+    blue: "#3B82F6",
+    blueBg: "#DBEAFE",
   },
   dark: {
     background: "#000000",
@@ -47,9 +58,18 @@ const Colors = {
     invertedBg: "#FFFFFF",
     invertedText: "#000000",
     invertedSubtext: "#737373",
-    danger: "#F87171", // Added missing color
-    brand: "#60A5FA", // Added missing color
-    success: "#34D399", // Added missing color
+    danger: "#F87171",
+    brand: "#60A5FA",
+    success: "#34D399",
+    // Vibrant Accents
+    emerald: "#34D399",
+    emeraldBg: "rgba(16, 185, 129, 0.15)",
+    rose: "#FB7185",
+    roseBg: "rgba(244, 63, 94, 0.15)",
+    amber: "#FBBF24",
+    amberBg: "rgba(245, 158, 11, 0.15)",
+    blue: "#60A5FA",
+    blueBg: "rgba(59, 130, 246, 0.15)",
   },
 };
 
@@ -90,6 +110,10 @@ export default function HomeScreen() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
 
+  // NEW STATES FOR DASHBOARD
+  const [attendanceData, setAttendanceData] = useState<any[]>([]);
+  const [submissionsData, setSubmissionsData] = useState<any[]>([]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
@@ -128,19 +152,24 @@ export default function HomeScreen() {
 
   const fetchDashboardData = async () => {
     try {
-      const [cUser, cStats, cTime, cTasks, cCourses] = await Promise.all([
-        AsyncStorage.getItem("off_dash_user"),
-        AsyncStorage.getItem("off_dash_stats"),
-        AsyncStorage.getItem("off_dash_time"),
-        AsyncStorage.getItem("off_dash_tasks"),
-        AsyncStorage.getItem("off_dash_courses"),
-      ]);
+      const [cUser, cStats, cTime, cTasks, cCourses, cAtt, cSub] =
+        await Promise.all([
+          AsyncStorage.getItem("off_dash_user"),
+          AsyncStorage.getItem("off_dash_stats"),
+          AsyncStorage.getItem("off_dash_time"),
+          AsyncStorage.getItem("off_dash_tasks"),
+          AsyncStorage.getItem("off_dash_courses"),
+          AsyncStorage.getItem("off_dash_att"),
+          AsyncStorage.getItem("off_dash_sub"),
+        ]);
 
       if (cUser) setUserName(JSON.parse(cUser));
       if (cStats) setStats(JSON.parse(cStats));
       if (cTime) processTimetable(JSON.parse(cTime));
       if (cTasks) setTasks(JSON.parse(cTasks));
       if (cCourses) setCourses(JSON.parse(cCourses));
+      if (cAtt) setAttendanceData(JSON.parse(cAtt));
+      if (cSub) setSubmissionsData(JSON.parse(cSub));
 
       if (cUser || cTime || cTasks) setIsLoading(false);
 
@@ -165,6 +194,8 @@ export default function HomeScreen() {
         axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config),
         axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config),
         axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/attendance?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/submissions?t=${timestamp}`, config),
       ]);
 
       const isAnyRejected = results.some((r) => r.status === "rejected");
@@ -205,6 +236,20 @@ export default function HomeScreen() {
           : [];
         setCourses(freshCourses);
         AsyncStorage.setItem("off_dash_courses", JSON.stringify(freshCourses));
+      }
+      if (results[5].status === "fulfilled") {
+        const freshAtt = Array.isArray(results[5].value.data)
+          ? results[5].value.data
+          : [];
+        setAttendanceData(freshAtt);
+        AsyncStorage.setItem("off_dash_att", JSON.stringify(freshAtt));
+      }
+      if (results[6].status === "fulfilled") {
+        const freshSub = Array.isArray(results[6].value.data)
+          ? results[6].value.data
+          : [];
+        setSubmissionsData(freshSub);
+        AsyncStorage.setItem("off_dash_sub", JSON.stringify(freshSub));
       }
     } catch (error) {
       setIsOffline(true);
@@ -255,45 +300,38 @@ export default function HomeScreen() {
   const startOfWeekTime = getStartOfWeek().getTime();
   const endOfWeekTime = getEndOfWeek().getTime();
 
-  const incompleteTasks = tasks.filter((t) => !t.completed);
-
-  // 1. Grab overdue/past tasks and sort by creation date
+  const incompleteTasks = tasks.filter((t: any) => !t.completed);
   const previousTasks = incompleteTasks
-    .filter((t) => getTaskTime(t) < startOfWeekTime)
+    .filter((t: any) => getTaskTime(t) < startOfWeekTime)
     .sort(
-      (a, b) =>
+      (a: any, b: any) =>
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
-
-  // 2. Grab current week tasks and sort by creation date
   const currentWeekTasks = incompleteTasks
-    .filter((t) => {
+    .filter((t: any) => {
       const time = getTaskTime(t);
       return time >= startOfWeekTime && time <= endOfWeekTime;
     })
     .sort(
-      (a, b) =>
+      (a: any, b: any) =>
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
 
-  // Combine them (Previous tasks naturally bubble to the top!)
   const activeTasks = [...previousTasks, ...currentWeekTasks];
-  const actionItems = activeTasks.slice(0, 5); // Show up to 5 actionable items
-
+  const actionItems = activeTasks.slice(0, 5);
   const completedTodayTasks = tasks.filter(
-    (t) =>
+    (t: any) =>
       t.completed &&
       new Date(t.updatedAt || t.createdAt).toDateString() ===
         new Date().toDateString(),
   );
-
   const totalTasksScope = activeTasks.length + completedTodayTasks.length;
 
   const toggleTaskCompletion = async (taskId: string) => {
     setCompletingId(taskId);
     setTimeout(async () => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      const newTasks = tasks.map((t) =>
+      const newTasks = tasks.map((t: any) =>
         t._id === taskId
           ? {
               ...t,
@@ -324,16 +362,74 @@ export default function HomeScreen() {
   const getCourseIcon = (courseName: string) => {
     if (!courseName || courseName === "General")
       return <Ionicons name="book" size={14} color={theme.subtext} />;
-
-    const matchedCourse = courses.find((c) => c.name === courseName);
+    const matchedCourse = courses.find((c: any) => c.name === courseName);
     if (
       matchedCourse &&
       (matchedCourse.type === "university" || matchedCourse.type === "uni")
     ) {
       return <UCPLogo width={14} height={14} color={theme.text} />;
     }
-
     return <Ionicons name="book" size={14} color={theme.subtext} />;
+  };
+
+  // --- FIXED: BULLETPROOF TYPESCRIPT FOR ATTENDANCE ALERTS (< 75%) ---
+  const lowAttendanceCourses = useMemo(() => {
+    return attendanceData
+      .map((att: any) => {
+        if (!att?.summary || att.summary.conducted === 0) return null;
+        const conducted = att.summary.conducted;
+        const attended = att.summary.attended;
+        const absents = conducted - attended;
+        const percentage = (attended / conducted) * 100;
+        const remainingAbsents = Math.max(0, 13 - absents);
+
+        if (percentage < 75) {
+          return {
+            name: att.courseName,
+            percentage,
+            absents,
+            remainingAbsents,
+          };
+        }
+        return null;
+      })
+      .filter((item: any) => item !== null)
+      .sort((a: any, b: any) => a.percentage - b.percentage);
+  }, [attendanceData]);
+
+  // --- FIXED: BULLETPROOF TYPESCRIPT FOR PENDING SUBMISSIONS ---
+  const activeSubmissions = useMemo(() => {
+    let pending: any[] = [];
+    submissionsData.forEach((sub: any) => {
+      if (sub?.tasks) {
+        sub.tasks.forEach((task: any) => {
+          const statusStr = task?.status || "";
+          const isSubmitted = statusStr.toLowerCase().includes("submitted");
+          const dueObj = task?.dueDate ? new Date(task.dueDate) : new Date(0);
+
+          if (!isSubmitted && dueObj.getTime() > new Date().getTime()) {
+            pending.push({ ...task, courseName: sub.courseName });
+          }
+        });
+      }
+    });
+    return pending.sort((a: any, b: any) => {
+      const timeA = a?.dueDate ? new Date(a.dueDate).getTime() : 0;
+      const timeB = b?.dueDate ? new Date(b.dueDate).getTime() : 0;
+      return timeA - timeB;
+    });
+  }, [submissionsData]);
+
+  const getDaysLeft = (dueDate: string) => {
+    if (!dueDate) return "Unknown Deadline";
+    const due = new Date(dueDate);
+    const now = new Date();
+    const diffDays = Math.ceil(
+      (due.getTime() - now.getTime()) / (1000 * 3600 * 24),
+    );
+    if (diffDays === 0) return "Due Today";
+    if (diffDays === 1) return "Due Tomorrow";
+    return `Due in ${diffDays} days`;
   };
 
   return (
@@ -447,6 +543,138 @@ export default function HomeScreen() {
             </View>
           </View>
 
+          {/* --- NEW: ATTENDANCE ALERTS (<75%) --- */}
+          {lowAttendanceCourses.length > 0 && (
+            <View style={{ marginBottom: 30 }}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Attendance Alerts</Text>
+                <Ionicons name="warning" size={20} color={theme.rose} />
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.alertsScrollContainer}
+              >
+                {lowAttendanceCourses.map((course: any, idx: number) => {
+                  const isCritical = course.percentage < 60;
+                  const cardColor = isCritical ? theme.rose : theme.amber;
+                  const bgTint = isCritical ? theme.roseBg : theme.amberBg;
+
+                  return (
+                    <View
+                      key={idx}
+                      style={[
+                        styles.alertCard,
+                        { borderLeftColor: cardColor, borderLeftWidth: 4 },
+                      ]}
+                    >
+                      <Text style={styles.alertCourseName} numberOfLines={2}>
+                        {course.name}
+                      </Text>
+                      <View style={styles.alertMainRow}>
+                        <Text
+                          style={[styles.alertPercentage, { color: cardColor }]}
+                        >
+                          {course.percentage.toFixed(0)}%
+                        </Text>
+                        <View
+                          style={[
+                            styles.absentsPill,
+                            { backgroundColor: bgTint },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.absentsPillText,
+                              { color: cardColor },
+                            ]}
+                          >
+                            {course.remainingAbsents} Absents Left
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.alertMeta}>
+                        You have taken {course.absents} out of 13 allowed
+                        absences.
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* --- NEW: PENDING SUBMISSIONS --- */}
+          {activeSubmissions.length > 0 && (
+            <View style={{ marginBottom: 30 }}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Pending Submissions</Text>
+              </View>
+              <View style={styles.taskList}>
+                {activeSubmissions.slice(0, 3).map((sub: any, idx: number) => {
+                  const daysLeftText = getDaysLeft(sub.dueDate);
+                  const isUrgent =
+                    daysLeftText.includes("Today") ||
+                    daysLeftText.includes("Tomorrow");
+
+                  return (
+                    <TouchableOpacity
+                      key={idx}
+                      activeOpacity={0.7}
+                      onPress={() =>
+                        sub.submissionUrl && Linking.openURL(sub.submissionUrl)
+                      }
+                      style={[
+                        styles.taskRow,
+                        idx === Math.min(activeSubmissions.length, 3) - 1 && {
+                          borderBottomWidth: 0,
+                        },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.subIconBox,
+                          {
+                            backgroundColor: isUrgent
+                              ? theme.roseBg
+                              : theme.blueBg,
+                          },
+                        ]}
+                      >
+                        <Ionicons
+                          name="document-text"
+                          size={16}
+                          color={isUrgent ? theme.rose : theme.blue}
+                        />
+                      </View>
+                      <View style={styles.taskInfo}>
+                        <Text style={styles.taskText} numberOfLines={1}>
+                          {sub.title}
+                        </Text>
+                        <Text style={styles.taskCourse} numberOfLines={1}>
+                          {sub.courseName}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Text
+                          style={[
+                            styles.subDate,
+                            isUrgent && {
+                              color: theme.rose,
+                              fontWeight: "800",
+                            },
+                          ]}
+                        >
+                          {daysLeftText}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Today's Schedule</Text>
           </View>
@@ -463,7 +691,7 @@ export default function HomeScreen() {
                 </Text>
               </View>
             ) : (
-              todaysClasses.map((cls, index) => (
+              todaysClasses.map((cls: any, index: number) => (
                 <View key={cls._id || index} style={styles.timelineRow}>
                   <View style={styles.timelineLeft}>
                     <Text style={styles.timelineTime}>{cls.startTime}</Text>
@@ -509,7 +737,7 @@ export default function HomeScreen() {
                 </Text>
               </View>
             ) : (
-              actionItems.map((task, index) => {
+              actionItems.map((task: any, index: number) => {
                 const isCompleting = task._id === completingId;
                 const isOverdue = getTaskTime(task) < startOfWeekTime;
 
@@ -560,7 +788,6 @@ export default function HomeScreen() {
                         <Text style={styles.taskCourse}>
                           {task.course || "General"}
                         </Text>
-                        {/* Tiny red indicator if the task was carried over from previous weeks */}
                         {isOverdue && (
                           <Text
                             style={{
@@ -814,4 +1041,41 @@ const getStyles = (theme: any) =>
     },
     taskCourse: { fontSize: 13, color: theme.subtext, fontWeight: "600" },
     priorityDot: { width: 8, height: 8, borderRadius: 4 },
+
+    // --- ATTENDANCE ALERTS ---
+    alertsScrollContainer: { paddingHorizontal: 24, gap: 12 },
+    alertCard: {
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 20,
+      padding: 16,
+      width: 260,
+    },
+    alertCourseName: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: theme.text,
+      marginBottom: 12,
+    },
+    alertMainRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 10,
+    },
+    alertPercentage: { fontSize: 28, fontWeight: "900", letterSpacing: -1 },
+    absentsPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+    absentsPillText: { fontSize: 11, fontWeight: "800" },
+    alertMeta: { fontSize: 11, color: theme.subtext, fontWeight: "600" },
+
+    // --- PENDING SUBMISSIONS ---
+    subIconBox: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    subDate: { fontSize: 12, color: theme.subtext, fontWeight: "600" },
   });

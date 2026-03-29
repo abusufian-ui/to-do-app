@@ -9,23 +9,38 @@ import {
   ActivityIndicator,
   Alert,
   Appearance,
+  Keyboard,
+  KeyboardAvoidingView,
+  LayoutAnimation,
   LogBox,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
+  UIManager,
   useColorScheme,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-// --- THE FIX: MUTE EXPO GO SDK 53 WARNING ---
+import PortalSync from "../../components/PortalSync";
+import UCPLogo from "../../components/UCPLogo";
+
 LogBox.ignoreLogs(["expo-notifications: Android Push notifications"]);
 
-// --- Pure Monochrome Theme ---
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 const Colors = {
   light: {
     background: "#FFFFFF",
@@ -62,88 +77,143 @@ export default function SettingsScreen() {
 
   const insets = useSafeAreaInsets();
   const statusBarHeight =
-    Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
+    Platform.OS === "android" ? StatusBar.currentHeight || 0 : insets.top;
 
   const [userData, setUserData] = useState<{
     name: string;
     email: string;
     initials: string;
     isAdmin: boolean;
+    isPortalConnected: boolean;
+    lastSyncAt: string | null;
   } | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
 
-  // Preferences State
+  const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
+
+  // --- PORTAL SYNC STATE ---
+  const [showPortal, setShowPortal] = useState(false);
+  const [jwtToken, setJwtToken] = useState<string | null>(null);
+
+  // --- PREFERENCES & COURSES STATE ---
   const [activeThemeMode, setActiveThemeMode] = useState<
     "light" | "dark" | "system"
   >("system");
   const [generalNotifs, setGeneralNotifs] = useState(false);
   const [prayerNotifs, setPrayerNotifs] = useState(false);
 
-  // --- FETCH REAL USER DATA & PREFERENCES ---
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-        const token = await AsyncStorage.getItem("userToken");
-        if (!token || !BACKEND_URL) return;
+  // Visibility States
+  const [uniCourses, setUniCourses] = useState<any[]>([]);
+  const [hiddenCourses, setHiddenCourses] = useState<string[]>([]);
+  const [showVisibilityAccordion, setShowVisibilityAccordion] = useState(false);
 
-        const res = await axios.get(`${BACKEND_URL}/auth/user`, {
+  // --- FEEDBACK / DISPUTE STATE ---
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackSubject, setFeedbackSubject] = useState("");
+  const [feedbackDesc, setFeedbackDesc] = useState("");
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+
+  const fetchUserAndCourses = async () => {
+    try {
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      const token = await AsyncStorage.getItem("userToken");
+      setJwtToken(token);
+
+      const cachedData = await AsyncStorage.getItem("cachedProfileData");
+      if (cachedData) setUserData(JSON.parse(cachedData));
+
+      const savedHidden = await AsyncStorage.getItem("hiddenCourses");
+      if (savedHidden) setHiddenCourses(JSON.parse(savedHidden));
+
+      if (!token || !BACKEND_URL) return;
+
+      const [userRes, coursesRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/auth/user`, {
           headers: { "x-auth-token": token },
-        });
+        }),
+        axios
+          .get(`${BACKEND_URL}/courses`, { headers: { "x-auth-token": token } })
+          .catch(() => null),
+      ]);
 
-        const name = res.data.name || "Unknown User";
-        const email = res.data.email || "No email linked";
-        const isAdmin =
-          res.data.isAdmin || email.toLowerCase() === "ranasuffyan9@gmail.com";
-        const initials =
-          name
-            .match(/(\b\S)?/g)
-            ?.join("")
-            .match(/(^\S|\S$)?/g)
-            ?.join("")
-            .toUpperCase() || "U";
-
-        setUserData({ name, email, initials, isAdmin });
-      } catch (error) {
-        console.error("Failed to load user profile", error);
-      } finally {
-        setIsLoading(false);
+      if (coursesRes && coursesRes.data) {
+        const uCourses = coursesRes.data.filter(
+          (c: any) => c.type === "university" || c.type === "uni",
+        );
+        setUniCourses(uCourses);
       }
-    };
 
-    fetchUser();
+      const name = userRes.data.name || "Unknown User";
+      const email = userRes.data.email || "No email linked";
+      const isAdmin =
+        userRes.data.isAdmin ||
+        email.toLowerCase() === "ranasuffyan9@gmail.com";
+      const isConnected = userRes.data.isPortalConnected || false;
+      const lastSync = userRes.data.lastSyncAt || null;
+      const initials =
+        name
+          .match(/(\b\S)?/g)
+          ?.join("")
+          .match(/(^\S|\S$)?/g)
+          ?.join("")
+          .toUpperCase() || "U";
 
-    // Load saved preferences
+      const freshData = {
+        name,
+        email,
+        initials,
+        isAdmin,
+        isPortalConnected: isConnected,
+        lastSyncAt: lastSync,
+      };
+      setUserData(freshData);
+      setIsOffline(false);
+      await AsyncStorage.setItem(
+        "cachedProfileData",
+        JSON.stringify(freshData),
+      );
+    } catch (error: any) {
+      if (!error.response) setIsOffline(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUserAndCourses();
     AsyncStorage.multiGet(["themePref", "generalNotifs", "prayerNotifs"]).then(
       (values) => {
         const savedTheme = values[0][1];
-        const savedGeneral = values[1][1];
-        const savedPrayer = values[2][1];
-
         if (
           savedTheme === "light" ||
           savedTheme === "dark" ||
           savedTheme === "system"
         )
           setActiveThemeMode(savedTheme);
-        if (savedGeneral === "true") setGeneralNotifs(true);
-        if (savedPrayer === "true") setPrayerNotifs(true);
+        if (values[1][1] === "true") setGeneralNotifs(true);
+        if (values[2][1] === "true") setPrayerNotifs(true);
       },
     );
   }, []);
 
-  // --- THEME SWITCHER LOGIC ---
   const handleThemeChange = async (mode: "light" | "dark" | "system") => {
     setActiveThemeMode(mode);
     await AsyncStorage.setItem("themePref", mode);
-    if (mode === "system") {
-      Appearance.setColorScheme(null);
-    } else {
-      Appearance.setColorScheme(mode);
-    }
+    if (mode === "system") Appearance.setColorScheme(null);
+    else Appearance.setColorScheme(mode);
   };
 
-  // --- NOTIFICATION PERMISSION HANDLER ---
+  const toggleCourseVisibility = async (courseName: string) => {
+    let updated = [...hiddenCourses];
+    if (updated.includes(courseName)) {
+      updated = updated.filter((name) => name !== courseName);
+    } else {
+      updated.push(courseName);
+    }
+    setHiddenCourses(updated);
+    await AsyncStorage.setItem("hiddenCourses", JSON.stringify(updated));
+  };
+
   const requestNotificationPermission = async () => {
     try {
       const { status: existingStatus } =
@@ -170,7 +240,6 @@ export default function SettingsScreen() {
     }
   };
 
-  // --- UPDATED SERVER SYNC LOGIC ---
   const toggleGeneralNotifs = async (value: boolean) => {
     if (value) {
       const granted = await requestNotificationPermission();
@@ -178,17 +247,14 @@ export default function SettingsScreen() {
         setGeneralNotifs(false);
         return;
       }
-
       try {
         const projectId =
           Constants.expoConfig?.extra?.eas?.projectId || "YOUR_PROJECT_ID_HERE";
         const pushTokenString = (
           await Notifications.getExpoPushTokenAsync({ projectId })
         ).data;
-
         const token = await AsyncStorage.getItem("userToken");
         const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-
         if (token && BACKEND_URL) {
           await axios.post(
             `${BACKEND_URL}/user/push-token`,
@@ -196,14 +262,7 @@ export default function SettingsScreen() {
             { headers: { "x-auth-token": token } },
           );
         }
-
-        Alert.alert(
-          "General Alerts Enabled",
-          "You will now be notified 15 mins before tasks via the server.",
-        );
       } catch (e) {
-        console.error("Failed to register token", e);
-        Alert.alert("Error", "Could not connect to notification server.");
         setGeneralNotifs(false);
         return;
       }
@@ -218,11 +277,8 @@ export default function SettingsScreen() {
             { headers: { "x-auth-token": token } },
           );
         }
-      } catch (e) {
-        console.error("Failed to remove token", e);
-      }
+      } catch (e) {}
       await Notifications.cancelAllScheduledNotificationsAsync();
-      Alert.alert("Alerts Muted", "Server alerts have been disabled.");
     }
     setGeneralNotifs(value);
     await AsyncStorage.setItem("generalNotifs", value ? "true" : "false");
@@ -235,13 +291,7 @@ export default function SettingsScreen() {
         setPrayerNotifs(false);
         return;
       }
-      Alert.alert(
-        "Prayer Alerts Enabled",
-        "You will now receive server-synced reminders for all 5 daily prayers.",
-      );
     }
-
-    // Tell the backend about the preference change
     try {
       const token = await AsyncStorage.getItem("userToken");
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -252,15 +302,47 @@ export default function SettingsScreen() {
           { headers: { "x-auth-token": token } },
         );
       }
-    } catch (e) {
-      console.error("Failed to sync prayer preference", e);
-    }
-
+    } catch (e) {}
     setPrayerNotifs(value);
     await AsyncStorage.setItem("prayerNotifs", value ? "true" : "false");
   };
 
-  // --- BULLETPROOF LOGOUT ---
+  // --- SUBMIT FEEDBACK FUNCTION ---
+  const submitFeedback = async () => {
+    if (!feedbackSubject.trim() || !feedbackDesc.trim()) {
+      Alert.alert(
+        "Missing Fields",
+        "Please provide both a subject and a description.",
+      );
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    try {
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+      await axios.post(
+        `${BACKEND_URL}/feedback`,
+        { subject: feedbackSubject, description: feedbackDesc },
+        { headers: { "x-auth-token": jwtToken } },
+      );
+
+      Alert.alert(
+        "Feedback Submitted",
+        "Your request has been sent successfully. We will look into it!",
+      );
+      setShowFeedbackModal(false);
+      setFeedbackSubject("");
+      setFeedbackDesc("");
+    } catch (error: any) {
+      Alert.alert(
+        "Submission Failed",
+        error.response?.data?.message || "Check your network connection.",
+      );
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
   const handleLogout = () => {
     Alert.alert(
       "Sign Out",
@@ -272,17 +354,12 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             await AsyncStorage.removeItem("userToken");
-
+            await AsyncStorage.removeItem("cachedProfileData");
             const keys = await AsyncStorage.getAllKeys();
             const cacheKeys = keys.filter((k) => k.startsWith("off_"));
             await AsyncStorage.multiRemove(cacheKeys);
-
             await Notifications.cancelAllScheduledNotificationsAsync();
-
-            if (router.canDismiss()) {
-              router.dismissAll();
-            }
-
+            if (router.canDismiss()) router.dismissAll();
             router.replace("/login");
           },
         },
@@ -290,9 +367,130 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleSyncComplete = () => {
+    setShowPortal(false);
+    fetchUserAndCourses();
+  };
+
   return (
     <View style={styles.container}>
-      {isLoading ? (
+      {/* PORTAL SYNC MODAL */}
+      <Modal
+        visible={showPortal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        statusBarTranslucent={true}
+        hardwareAccelerated={true}
+        onRequestClose={() => setShowPortal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: theme.background }}>
+          <View
+            style={[
+              styles.modalHeader,
+              { paddingTop: Platform.OS === "ios" ? 15 : statusBarHeight + 10 },
+            ]}
+          >
+            <View style={{ width: 60 }} />
+            <View style={styles.modalTitleContainer}>
+              <Ionicons name="logo-microsoft" size={18} color="#00a4ef" />
+              <Text style={[styles.modalTitle, { color: theme.text }]}>
+                Login with Microsoft
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={() => setShowPortal(false)}
+            >
+              <Text style={styles.modalCloseText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+          {jwtToken && (
+            <PortalSync
+              jwtToken={jwtToken}
+              onSyncComplete={handleSyncComplete}
+            />
+          )}
+        </View>
+      </Modal>
+
+      {/* FEEDBACK & DISPUTE MODAL */}
+      <Modal
+        visible={showFeedbackModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowFeedbackModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.feedbackOverlay}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.feedbackCard}>
+              <View style={styles.feedbackHeader}>
+                <Text style={styles.feedbackTitle}>Report an Issue</Text>
+                <TouchableOpacity
+                  onPress={() => setShowFeedbackModal(false)}
+                  style={styles.feedbackCloseIcon}
+                >
+                  <Ionicons name="close" size={24} color={theme.subtext} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.feedbackSubText}>
+                Help us improve your experience. Describe the bug, feature
+                request, or dispute below.
+              </Text>
+
+              <Text style={styles.inputLabel}>Subject</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="e.g., Syncing Issue, Feature Request..."
+                placeholderTextColor={theme.subtext}
+                value={feedbackSubject}
+                onChangeText={setFeedbackSubject}
+                maxLength={50}
+              />
+
+              <Text style={styles.inputLabel}>Description</Text>
+              <TextInput
+                style={[styles.textInput, styles.textArea]}
+                placeholder="Please describe the issue in detail..."
+                placeholderTextColor={theme.subtext}
+                value={feedbackDesc}
+                onChangeText={setFeedbackDesc}
+                multiline={true}
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.submitFeedbackBtn,
+                  isSubmittingFeedback && { opacity: 0.7 },
+                ]}
+                activeOpacity={0.8}
+                onPress={submitFeedback}
+                disabled={isSubmittingFeedback}
+              >
+                {isSubmittingFeedback ? (
+                  <ActivityIndicator color={theme.invertedText} size="small" />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="paper-plane"
+                      size={18}
+                      color={theme.invertedText}
+                    />
+                    <Text style={styles.submitFeedbackText}>Send Report</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {isLoading && !userData ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.text} />
         </View>
@@ -369,6 +567,74 @@ export default function SettingsScreen() {
             </View>
           </View>
 
+          {/* --- COURSE VISIBILITY ACCORDION --- */}
+          <View style={styles.settingBlock}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={[styles.settingHeader, { paddingBottom: 16 }]}
+              onPress={() => {
+                LayoutAnimation.configureNext(
+                  LayoutAnimation.Presets.easeInEaseOut,
+                );
+                setShowVisibilityAccordion(!showVisibilityAccordion);
+              }}
+            >
+              <Ionicons name="eye-outline" size={20} color={theme.text} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingTitle}>Course Visibility</Text>
+                <Text style={styles.settingRowSub}>
+                  Hide or unhide subjects from UI
+                </Text>
+              </View>
+              <Ionicons
+                name={showVisibilityAccordion ? "chevron-up" : "chevron-down"}
+                size={20}
+                color={theme.subtext}
+              />
+            </TouchableOpacity>
+
+            {showVisibilityAccordion && (
+              <View style={styles.accordionBody}>
+                {uniCourses.length === 0 ? (
+                  <Text style={styles.emptyAccordionText}>
+                    No synced courses available to manage.
+                  </Text>
+                ) : (
+                  uniCourses.map((course, idx) => {
+                    const isVisible = !hiddenCourses.includes(course.name);
+                    return (
+                      <View key={idx} style={styles.courseVisRow}>
+                        <View style={styles.courseVisLeft}>
+                          <UCPLogo width={22} height={22} color={theme.text} />
+                          <Text
+                            style={[
+                              styles.courseVisName,
+                              { color: theme.text },
+                            ]}
+                            numberOfLines={2}
+                          >
+                            {course.name}
+                          </Text>
+                        </View>
+                        <Switch
+                          value={isVisible}
+                          onValueChange={() =>
+                            toggleCourseVisibility(course.name)
+                          }
+                          trackColor={{
+                            false: theme.border,
+                            true: theme.success,
+                          }}
+                          ios_backgroundColor={theme.border}
+                        />
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            )}
+          </View>
+
           <View style={styles.settingBlock}>
             <View style={styles.settingHeader}>
               <Ionicons
@@ -378,7 +644,6 @@ export default function SettingsScreen() {
               />
               <Text style={styles.settingTitle}>Push Notifications</Text>
             </View>
-
             <View style={styles.settingRow}>
               <View style={styles.settingRowLeft}>
                 <View
@@ -407,9 +672,7 @@ export default function SettingsScreen() {
                 ios_backgroundColor={theme.border}
               />
             </View>
-
             <View style={styles.divider} />
-
             <View style={styles.settingRow}>
               <View style={styles.settingRowLeft}>
                 <View
@@ -440,7 +703,108 @@ export default function SettingsScreen() {
             </View>
           </View>
 
+          <Text style={styles.sectionHeading}>SUPPORT</Text>
+
+          <View style={styles.settingBlock}>
+            <TouchableOpacity
+              style={styles.settingRow}
+              activeOpacity={0.7}
+              onPress={() => setShowFeedbackModal(true)}
+            >
+              <View style={styles.settingRowLeft}>
+                <View
+                  style={[
+                    styles.iconBg,
+                    { backgroundColor: "rgba(245, 158, 11, 0.1)" },
+                  ]}
+                >
+                  <Ionicons
+                    name="chatbubbles-outline"
+                    size={18}
+                    color="#F59E0B"
+                  />
+                </View>
+                <View>
+                  <Text style={styles.settingRowTitle}>Report an Issue</Text>
+                  <Text style={styles.settingRowSub}>
+                    Feedback, bugs, or feature requests
+                  </Text>
+                </View>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={theme.subtext}
+              />
+            </TouchableOpacity>
+          </View>
+
           <Text style={styles.sectionHeading}>ACCOUNT</Text>
+
+          <View style={styles.settingBlock}>
+            <View style={styles.settingHeader}>
+              <Ionicons
+                name={isOffline ? "cloud-offline-outline" : "link-outline"}
+                size={20}
+                color={theme.text}
+              />
+              <Text style={styles.settingTitle}>UCP Portal Sync</Text>
+            </View>
+
+            <View style={styles.syncStatusContainer}>
+              <View style={styles.statusDotRow}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    {
+                      backgroundColor: isOffline
+                        ? theme.subtext
+                        : userData?.isPortalConnected
+                          ? theme.success
+                          : theme.danger,
+                    },
+                  ]}
+                />
+                <Text style={[styles.statusText, { color: theme.text }]}>
+                  {isOffline
+                    ? "Network Unavailable"
+                    : userData?.isPortalConnected
+                      ? "Connected & Syncing"
+                      : "Not Connected"}
+                </Text>
+              </View>
+              {userData?.isPortalConnected && userData.lastSyncAt && (
+                <Text style={styles.lastSyncText}>
+                  Last Sync:{" "}
+                  {new Date(userData.lastSyncAt).toLocaleString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </Text>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.connectPortalBtn, isOffline && { opacity: 0.5 }]}
+              activeOpacity={0.8}
+              disabled={isOffline}
+              onPress={() => {
+                if (!jwtToken)
+                  Alert.alert("Error", "Please log in to MyPortal first.");
+                else setShowPortal(true);
+              }}
+            >
+              <Text
+                style={[styles.connectPortalTitle, { color: theme.background }]}
+              >
+                {userData?.isPortalConnected
+                  ? "Force Sync Now"
+                  : "Connect UCP Account"}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <TouchableOpacity
             style={styles.logoutButton}
@@ -461,13 +825,6 @@ export default function SettingsScreen() {
 const getStyles = (theme: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background, paddingTop: 10 },
-    header: { paddingHorizontal: 24, marginBottom: 20 },
-    headerTitle: {
-      fontSize: 32,
-      fontWeight: "800",
-      color: theme.text,
-      letterSpacing: -1,
-    },
     loadingContainer: {
       flex: 1,
       justifyContent: "center",
@@ -610,6 +967,164 @@ const getStyles = (theme: any) =>
     settingRowSub: { fontSize: 12, color: theme.subtext, fontWeight: "500" },
     divider: { height: 1, backgroundColor: theme.border, marginHorizontal: 16 },
 
+    accordionBody: {
+      paddingHorizontal: 16,
+      paddingBottom: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      paddingTop: 10,
+    },
+    courseVisRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    courseVisLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      flex: 1,
+      gap: 12,
+      paddingRight: 16,
+    },
+    courseVisName: {
+      fontSize: 14,
+      fontWeight: "600",
+      letterSpacing: -0.2,
+      flex: 1,
+    },
+    emptyAccordionText: {
+      color: theme.subtext,
+      fontSize: 13,
+      fontStyle: "italic",
+      textAlign: "center",
+      paddingVertical: 10,
+    },
+
+    syncStatusContainer: { paddingHorizontal: 16, paddingBottom: 16 },
+    statusDotRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 4,
+    },
+    statusDot: { width: 10, height: 10, borderRadius: 5 },
+    statusText: { fontSize: 15, fontWeight: "600" },
+    lastSyncText: {
+      fontSize: 12,
+      color: theme.subtext,
+      fontWeight: "500",
+      marginLeft: 18,
+    },
+    connectPortalBtn: {
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.text,
+      paddingVertical: 14,
+      borderRadius: 16,
+      marginHorizontal: 10,
+      marginBottom: 10,
+    },
+    connectPortalTitle: { fontSize: 15, fontWeight: "700" },
+
+    // --- PORTAL MODAL UI ---
+    modalHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingBottom: 15,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      backgroundColor: theme.background,
+    },
+    modalTitleContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
+    modalTitle: { fontSize: 16, fontWeight: "700" },
+    modalCloseBtn: { width: 60, alignItems: "flex-end" },
+    modalCloseText: { fontSize: 16, fontWeight: "600", color: theme.brand },
+
+    // --- FEEDBACK MODAL UI ---
+    feedbackOverlay: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      justifyContent: "flex-end",
+    },
+    feedbackCard: {
+      backgroundColor: theme.background,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      padding: 24,
+      paddingBottom: 40,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: -5 },
+      shadowOpacity: 0.1,
+      shadowRadius: 10,
+      elevation: 20,
+    },
+    feedbackHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 10,
+    },
+    feedbackTitle: {
+      fontSize: 22,
+      fontWeight: "900",
+      color: theme.text,
+      letterSpacing: -0.5,
+    },
+    feedbackCloseIcon: {
+      padding: 4,
+      backgroundColor: theme.card,
+      borderRadius: 16,
+    },
+    feedbackSubText: {
+      fontSize: 14,
+      color: theme.subtext,
+      lineHeight: 20,
+      marginBottom: 24,
+    },
+    inputLabel: {
+      fontSize: 12,
+      fontWeight: "800",
+      color: theme.text,
+      marginBottom: 8,
+      letterSpacing: 0.5,
+      textTransform: "uppercase",
+    },
+    textInput: {
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      fontSize: 15,
+      color: theme.text,
+      marginBottom: 20,
+    },
+    textArea: {
+      height: 120,
+      paddingTop: 16,
+    },
+    submitFeedbackBtn: {
+      backgroundColor: theme.invertedBg,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 10,
+      paddingVertical: 16,
+      borderRadius: 16,
+      marginTop: 10,
+    },
+    submitFeedbackText: {
+      color: theme.invertedText,
+      fontSize: 16,
+      fontWeight: "800",
+    },
+
     logoutButton: {
       flexDirection: "row",
       alignItems: "center",
@@ -623,7 +1138,6 @@ const getStyles = (theme: any) =>
       marginBottom: 40,
     },
     logoutText: { fontSize: 16, fontWeight: "800", color: theme.danger },
-
     versionText: {
       textAlign: "center",
       fontSize: 12,
