@@ -13,13 +13,18 @@
     },
     "android": {
       "package": "com.abusufian.portalmobile",
+      "versionCode": 1,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/main-icon.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -66,7 +71,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "46cb0ede-207a-4611-acdc-5fc2954ddcf2"
+        "projectId": "0fc93a7b-fdec-4e3b-bdeb-5cfb1cacf68f"
       }
     }
   }

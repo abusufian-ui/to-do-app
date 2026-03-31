@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import React, { useEffect, useMemo, useState } from "react"; // <-- FIXED: useMemo imported
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   LayoutAnimation,
@@ -91,6 +92,7 @@ const parseTimeStringToDate = (timeStr: string) => {
 export default function HomeScreen() {
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
+  const router = useRouter();
 
   const todayDateStr = new Date()
     .toLocaleDateString("en-US", {
@@ -114,10 +116,81 @@ export default function HomeScreen() {
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
   const [submissionsData, setSubmissionsData] = useState<any[]>([]);
 
+  // --- SMART NAMAZ STATES ---
+  const [namazRecord, setNamazRecord] = useState<any>(null);
+  const [prayerTimings, setPrayerTimings] = useState<any>(null);
+  const [prayerState, setPrayerState] = useState<{
+    current: any;
+    next: any;
+    countdown: string;
+  }>({ current: null, next: null, countdown: "" });
+
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
+
+  // --- PRAYER COUNTDOWN ENGINE ---
+  useEffect(() => {
+    if (!prayerTimings) return;
+
+    const updatePrayerState = () => {
+      const now = new Date();
+      const times = {
+        fajr: prayerTimings.Fajr,
+        zuhr: prayerTimings.Dhuhr,
+        asr: prayerTimings.Asr,
+        maghrib: prayerTimings.Maghrib,
+        isha: prayerTimings.Isha,
+      };
+
+      const prayerEntries = Object.entries(times)
+        .map(([name, timeStr]) => {
+          const [h, m] = (timeStr as string).split(":").map(Number);
+          const d = new Date();
+          d.setHours(h, m, 0, 0);
+          return { name, time: d };
+        })
+        .sort((a, b) => a.time.getTime() - b.time.getTime());
+
+      let currentPrayer = prayerEntries[prayerEntries.length - 1]; // Default Isha
+      let nextPrayer = prayerEntries[0]; // Default Fajr (tomorrow)
+      let isNextTomorrow = true;
+
+      for (let i = 0; i < prayerEntries.length; i++) {
+        if (prayerEntries[i].time > now) {
+          nextPrayer = prayerEntries[i];
+          currentPrayer =
+            i === 0
+              ? prayerEntries[prayerEntries.length - 1]
+              : prayerEntries[i - 1];
+          isNextTomorrow = false;
+          break;
+        }
+      }
+
+      let nextTime = new Date(nextPrayer.time);
+      if (isNextTomorrow) {
+        nextTime.setDate(nextTime.getDate() + 1);
+      }
+
+      const diffMs = nextTime.getTime() - now.getTime();
+      const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      const countdown =
+        diffHrs > 0 ? `${diffHrs}h ${diffMins}m` : `${diffMins}m`;
+
+      setPrayerState({
+        current: currentPrayer,
+        next: nextPrayer,
+        countdown,
+      });
+    };
+
+    updatePrayerState();
+    const interval = setInterval(updatePrayerState, 60000);
+    return () => clearInterval(interval);
+  }, [prayerTimings]);
 
   const processTimetable = (allClasses: any[]) => {
     const todayList = allClasses
@@ -152,16 +225,27 @@ export default function HomeScreen() {
 
   const fetchDashboardData = async () => {
     try {
-      const [cUser, cStats, cTime, cTasks, cCourses, cAtt, cSub] =
-        await Promise.all([
-          AsyncStorage.getItem("off_dash_user"),
-          AsyncStorage.getItem("off_dash_stats"),
-          AsyncStorage.getItem("off_dash_time"),
-          AsyncStorage.getItem("off_dash_tasks"),
-          AsyncStorage.getItem("off_dash_courses"),
-          AsyncStorage.getItem("off_dash_att"),
-          AsyncStorage.getItem("off_dash_sub"),
-        ]);
+      const [
+        cUser,
+        cStats,
+        cTime,
+        cTasks,
+        cCourses,
+        cAtt,
+        cSub,
+        cNamaz,
+        cPtimings,
+      ] = await Promise.all([
+        AsyncStorage.getItem("off_dash_user"),
+        AsyncStorage.getItem("off_dash_stats"),
+        AsyncStorage.getItem("off_dash_time"),
+        AsyncStorage.getItem("off_dash_tasks"),
+        AsyncStorage.getItem("off_dash_courses"),
+        AsyncStorage.getItem("off_dash_att"),
+        AsyncStorage.getItem("off_dash_sub"),
+        AsyncStorage.getItem("off_dash_namaz"),
+        AsyncStorage.getItem("off_dash_ptimings"),
+      ]);
 
       if (cUser) setUserName(JSON.parse(cUser));
       if (cStats) setStats(JSON.parse(cStats));
@@ -170,6 +254,8 @@ export default function HomeScreen() {
       if (cCourses) setCourses(JSON.parse(cCourses));
       if (cAtt) setAttendanceData(JSON.parse(cAtt));
       if (cSub) setSubmissionsData(JSON.parse(cSub));
+      if (cNamaz) setNamazRecord(JSON.parse(cNamaz));
+      if (cPtimings) setPrayerTimings(JSON.parse(cPtimings));
 
       if (cUser || cTime || cTasks) setIsLoading(false);
 
@@ -189,16 +275,22 @@ export default function HomeScreen() {
 
       const timestamp = Date.now();
       const results = await Promise.allSettled([
-        axios.get(`${BACKEND_URL}/auth/user?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/student-stats?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/attendance?t=${timestamp}`, config),
-        axios.get(`${BACKEND_URL}/submissions?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/auth/user?t=${timestamp}`, config), // 0
+        axios.get(`${BACKEND_URL}/student-stats?t=${timestamp}`, config), // 1
+        axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config), // 2
+        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config), // 3
+        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config), // 4
+        axios.get(`${BACKEND_URL}/attendance?t=${timestamp}`, config), // 5
+        axios.get(`${BACKEND_URL}/submissions?t=${timestamp}`, config), // 6
+        axios.get(`${BACKEND_URL}/namaz/today?t=${timestamp}`, config), // 7
+        axios.get(
+          `https://api.aladhan.com/v1/timingsByCity?city=Lahore&country=Pakistan&method=1`,
+        ), // 8
       ]);
 
-      const isAnyRejected = results.some((r) => r.status === "rejected");
+      const isAnyRejected = results.some(
+        (r, idx) => r.status === "rejected" && idx < 7,
+      );
       setIsOffline(isAnyRejected);
 
       if (results[0].status === "fulfilled" && results[0].value.data.name) {
@@ -207,6 +299,9 @@ export default function HomeScreen() {
           "off_dash_user",
           JSON.stringify(results[0].value.data.name),
         );
+        if (results[0].value.data.isPortalConnected === false) {
+          router.replace("/(tabs)/settings");
+        }
       }
       if (results[1].status === "fulfilled" && !results[1].value.data.message) {
         const freshStats = {
@@ -251,6 +346,20 @@ export default function HomeScreen() {
         setSubmissionsData(freshSub);
         AsyncStorage.setItem("off_dash_sub", JSON.stringify(freshSub));
       }
+      if (results[7].status === "fulfilled") {
+        setNamazRecord(results[7].value.data);
+        AsyncStorage.setItem(
+          "off_dash_namaz",
+          JSON.stringify(results[7].value.data),
+        );
+      }
+      if (results[8].status === "fulfilled") {
+        setPrayerTimings(results[8].value.data.data.timings);
+        AsyncStorage.setItem(
+          "off_dash_ptimings",
+          JSON.stringify(results[8].value.data.data.timings),
+        );
+      }
     } catch (error) {
       setIsOffline(true);
       console.log("Offline mode active.");
@@ -271,7 +380,7 @@ export default function HomeScreen() {
     fetchDashboardData();
   };
 
-  // --- SMART DASHBOARD FILTERING (Past + Current Week ONLY) ---
+  // --- SMART DASHBOARD FILTERING ---
   const getStartOfWeek = () => {
     const d = new Date();
     const day = d.getDay();
@@ -372,7 +481,6 @@ export default function HomeScreen() {
     return <Ionicons name="book" size={14} color={theme.subtext} />;
   };
 
-  // --- FIXED: BULLETPROOF TYPESCRIPT FOR ATTENDANCE ALERTS (< 75%) ---
   const lowAttendanceCourses = useMemo(() => {
     return attendanceData
       .map((att: any) => {
@@ -397,7 +505,6 @@ export default function HomeScreen() {
       .sort((a: any, b: any) => a.percentage - b.percentage);
   }, [attendanceData]);
 
-  // --- FIXED: BULLETPROOF TYPESCRIPT FOR PENDING SUBMISSIONS ---
   const activeSubmissions = useMemo(() => {
     let pending: any[] = [];
     submissionsData.forEach((sub: any) => {
@@ -464,6 +571,7 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.bentoContainer}>
+            {/* --- 1. HERO BOX (CLASS STATUS) --- */}
             <View
               style={[
                 styles.bentoBox,
@@ -516,6 +624,7 @@ export default function HomeScreen() {
               </Text>
             </View>
 
+            {/* --- 2. CGPA & TASKS (SUB GRID) --- */}
             <View style={styles.subGrid}>
               <View style={[styles.bentoBox, styles.halfBox]}>
                 <Ionicons
@@ -541,9 +650,87 @@ export default function HomeScreen() {
                 <Text style={styles.bentoLabel}>Tasks Done</Text>
               </View>
             </View>
+
+            {/* --- 3. 🚀 SMART NAMAZ TRACKER CARD --- */}
+            {prayerState.current && (
+              <View style={styles.namazCard}>
+                <View style={styles.namazLeft}>
+                  <View style={styles.mosqueIconBox}>
+                    <Text style={{ fontSize: 26 }}>🕌</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.namazTitle}>
+                      {prayerState.current.name.charAt(0).toUpperCase() +
+                        prayerState.current.name.slice(1)}{" "}
+                      Prayer
+                    </Text>
+                    {(() => {
+                      const currName = prayerState.current.name;
+                      const status =
+                        namazRecord?.prayers?.[currName] || "pending";
+                      const isOffered = status === "offered";
+                      const isMissed =
+                        status === "missed" || status === "qazah";
+                      const bgTint = isOffered
+                        ? theme.emeraldBg
+                        : isMissed
+                          ? theme.roseBg
+                          : theme.amberBg;
+                      const textColor = isOffered
+                        ? theme.emerald
+                        : isMissed
+                          ? theme.rose
+                          : theme.amber;
+
+                      return (
+                        <View
+                          style={[
+                            styles.namazStatusBadge,
+                            { backgroundColor: bgTint },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.namazStatusText,
+                              { color: textColor },
+                            ]}
+                          >
+                            {status.toUpperCase()}
+                          </Text>
+                        </View>
+                      );
+                    })()}
+                  </View>
+                </View>
+
+                <View style={styles.namazRight}>
+                  {namazRecord?.prayers?.[prayerState.current.name] ===
+                  "pending" ? (
+                    <>
+                      <Text style={styles.nextNamazText}>Time Remaining</Text>
+                      <Text
+                        style={[styles.countdownText, { color: theme.amber }]}
+                      >
+                        {prayerState.countdown}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.nextNamazText}>
+                        Next:{" "}
+                        {prayerState.next?.name.charAt(0).toUpperCase() +
+                          prayerState.next?.name.slice(1)}
+                      </Text>
+                      <Text style={styles.countdownText}>
+                        in {prayerState.countdown}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </View>
+            )}
           </View>
 
-          {/* --- NEW: ATTENDANCE ALERTS (<75%) --- */}
           {lowAttendanceCourses.length > 0 && (
             <View style={{ marginBottom: 30 }}>
               <View style={styles.sectionHeader}>
@@ -604,7 +791,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* --- NEW: PENDING SUBMISSIONS --- */}
           {activeSubmissions.length > 0 && (
             <View style={{ marginBottom: 30 }}>
               <View style={styles.sectionHeader}>
@@ -1042,6 +1228,58 @@ const getStyles = (theme: any) =>
     taskCourse: { fontSize: 13, color: theme.subtext, fontWeight: "600" },
     priorityDot: { width: 8, height: 8, borderRadius: 4 },
 
+    // --- NAMAZ CARD STYLES ---
+    namazCard: {
+      backgroundColor: theme.card,
+      borderRadius: 24,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: theme.border,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    namazLeft: { flexDirection: "row", alignItems: "center", gap: 14 },
+    mosqueIconBox: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: theme.background,
+      justifyContent: "center",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    namazTitle: {
+      fontSize: 16,
+      fontWeight: "800",
+      color: theme.text,
+      marginBottom: 4,
+    },
+    namazStatusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+      alignSelf: "flex-start",
+    },
+    namazStatusText: {
+      fontSize: 10,
+      fontWeight: "900",
+      letterSpacing: 0.5,
+    },
+    namazRight: { alignItems: "flex-end" },
+    nextNamazText: {
+      fontSize: 12,
+      color: theme.subtext,
+      fontWeight: "700",
+      marginBottom: 2,
+    },
+    countdownText: {
+      fontSize: 15,
+      fontWeight: "900",
+      color: theme.text,
+    },
+
     // --- ATTENDANCE ALERTS ---
     alertsScrollContainer: { paddingHorizontal: 24, gap: 12 },
     alertCard: {
@@ -1065,7 +1303,11 @@ const getStyles = (theme: any) =>
       marginBottom: 10,
     },
     alertPercentage: { fontSize: 28, fontWeight: "900", letterSpacing: -1 },
-    absentsPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+    absentsPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+    },
     absentsPillText: { fontSize: 11, fontWeight: "800" },
     alertMeta: { fontSize: 11, color: theme.subtext, fontWeight: "600" },
 

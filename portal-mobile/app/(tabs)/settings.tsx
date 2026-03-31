@@ -3,15 +3,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
-import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Appearance,
+  AppState,
   Keyboard,
   KeyboardAvoidingView,
   LayoutAnimation,
+  Linking,
   LogBox,
   Modal,
   Platform,
@@ -75,6 +77,10 @@ export default function SettingsScreen() {
   const styles = getStyles(theme);
   const router = useRouter();
 
+  // 🚨 GET PARAMS FROM NOTIFICATION ROUTING
+  const { autoLaunch } = useLocalSearchParams();
+  const hasAutoPrompted = useRef(false);
+
   const insets = useSafeAreaInsets();
   const statusBarHeight =
     Platform.OS === "android" ? StatusBar.currentHeight || 0 : insets.top;
@@ -99,10 +105,8 @@ export default function SettingsScreen() {
   const [activeThemeMode, setActiveThemeMode] = useState<
     "light" | "dark" | "system"
   >("system");
-  const [generalNotifs, setGeneralNotifs] = useState(false);
-  const [prayerNotifs, setPrayerNotifs] = useState(false);
 
-  // Visibility States
+  const [isNotifEnabled, setIsNotifEnabled] = useState(false);
   const [uniCourses, setUniCourses] = useState<any[]>([]);
   const [hiddenCourses, setHiddenCourses] = useState<string[]>([]);
   const [showVisibilityAccordion, setShowVisibilityAccordion] = useState(false);
@@ -172,6 +176,12 @@ export default function SettingsScreen() {
         "cachedProfileData",
         JSON.stringify(freshData),
       );
+
+      // 🚨 AUTO-LAUNCH LOGIC FOR DEAD COOKIES OR NOTIFICATION TAPS
+      if ((!isConnected || autoLaunch === "true") && !hasAutoPrompted.current) {
+        hasAutoPrompted.current = true;
+        setShowPortal(true);
+      }
     } catch (error: any) {
       if (!error.response) setIsOffline(true);
     } finally {
@@ -179,22 +189,68 @@ export default function SettingsScreen() {
     }
   };
 
+  const checkAndSyncNotificationStatus = async () => {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      const enabled = status === "granted";
+      setIsNotifEnabled(enabled);
+
+      const token = await AsyncStorage.getItem("userToken");
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+
+      if (enabled && token && BACKEND_URL) {
+        const projectId =
+          Constants.expoConfig?.extra?.eas?.projectId ||
+          "46cb0ede-207a-4611-acdc-5fc2954ddcf2";
+
+        const pushTokenString = (
+          await Notifications.getExpoPushTokenAsync({ projectId })
+        ).data;
+
+        await axios
+          .post(
+            `${BACKEND_URL}/user/push-token`,
+            { token: pushTokenString },
+            { headers: { "x-auth-token": token } },
+          )
+          .catch(() => {});
+      } else if (!enabled && token && BACKEND_URL) {
+        await axios
+          .post(
+            `${BACKEND_URL}/user/push-token`,
+            { token: null },
+            { headers: { "x-auth-token": token } },
+          )
+          .catch(() => {});
+      }
+    } catch (e) {
+      console.log("🚨 Error during push token generation/sync:", e);
+    }
+  };
+
   useEffect(() => {
     fetchUserAndCourses();
-    AsyncStorage.multiGet(["themePref", "generalNotifs", "prayerNotifs"]).then(
-      (values) => {
-        const savedTheme = values[0][1];
-        if (
-          savedTheme === "light" ||
-          savedTheme === "dark" ||
-          savedTheme === "system"
-        )
-          setActiveThemeMode(savedTheme);
-        if (values[1][1] === "true") setGeneralNotifs(true);
-        if (values[2][1] === "true") setPrayerNotifs(true);
-      },
-    );
-  }, []);
+    checkAndSyncNotificationStatus();
+
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        checkAndSyncNotificationStatus();
+      }
+    });
+
+    AsyncStorage.getItem("themePref").then((savedTheme) => {
+      if (
+        savedTheme === "light" ||
+        savedTheme === "dark" ||
+        savedTheme === "system"
+      )
+        setActiveThemeMode(savedTheme);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [autoLaunch]);
 
   const handleThemeChange = async (mode: "light" | "dark" | "system") => {
     setActiveThemeMode(mode);
@@ -214,100 +270,6 @@ export default function SettingsScreen() {
     await AsyncStorage.setItem("hiddenCourses", JSON.stringify(updated));
   };
 
-  const requestNotificationPermission = async () => {
-    try {
-      const { status: existingStatus } =
-        await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-      if (existingStatus !== "granted") {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-      if (finalStatus !== "granted") {
-        Alert.alert(
-          "Permission Denied",
-          "Please enable notifications in your phone settings.",
-        );
-        return false;
-      }
-      return true;
-    } catch (e) {
-      Alert.alert(
-        "Simulator Notice",
-        "Push Notifications require a built APK/App to test fully.",
-      );
-      return false;
-    }
-  };
-
-  const toggleGeneralNotifs = async (value: boolean) => {
-    if (value) {
-      const granted = await requestNotificationPermission();
-      if (!granted) {
-        setGeneralNotifs(false);
-        return;
-      }
-      try {
-        const projectId =
-          Constants.expoConfig?.extra?.eas?.projectId || "YOUR_PROJECT_ID_HERE";
-        const pushTokenString = (
-          await Notifications.getExpoPushTokenAsync({ projectId })
-        ).data;
-        const token = await AsyncStorage.getItem("userToken");
-        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-        if (token && BACKEND_URL) {
-          await axios.post(
-            `${BACKEND_URL}/user/push-token`,
-            { token: pushTokenString },
-            { headers: { "x-auth-token": token } },
-          );
-        }
-      } catch (e) {
-        setGeneralNotifs(false);
-        return;
-      }
-    } else {
-      try {
-        const token = await AsyncStorage.getItem("userToken");
-        const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-        if (token && BACKEND_URL) {
-          await axios.post(
-            `${BACKEND_URL}/user/push-token`,
-            { token: null },
-            { headers: { "x-auth-token": token } },
-          );
-        }
-      } catch (e) {}
-      await Notifications.cancelAllScheduledNotificationsAsync();
-    }
-    setGeneralNotifs(value);
-    await AsyncStorage.setItem("generalNotifs", value ? "true" : "false");
-  };
-
-  const togglePrayerNotifs = async (value: boolean) => {
-    if (value) {
-      const granted = await requestNotificationPermission();
-      if (!granted) {
-        setPrayerNotifs(false);
-        return;
-      }
-    }
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-      if (token && BACKEND_URL) {
-        await axios.put(
-          `${BACKEND_URL}/user/preferences`,
-          { prayerNotifs: value },
-          { headers: { "x-auth-token": token } },
-        );
-      }
-    } catch (e) {}
-    setPrayerNotifs(value);
-    await AsyncStorage.setItem("prayerNotifs", value ? "true" : "false");
-  };
-
-  // --- SUBMIT FEEDBACK FUNCTION ---
   const submitFeedback = async () => {
     if (!feedbackSubject.trim() || !feedbackDesc.trim()) {
       Alert.alert(
@@ -567,7 +529,6 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {/* --- COURSE VISIBILITY ACCORDION --- */}
           <View style={styles.settingBlock}>
             <TouchableOpacity
               activeOpacity={0.7}
@@ -644,63 +605,43 @@ export default function SettingsScreen() {
               />
               <Text style={styles.settingTitle}>Push Notifications</Text>
             </View>
-            <View style={styles.settingRow}>
-              <View style={styles.settingRowLeft}>
+
+            <View style={styles.syncStatusContainer}>
+              <View style={styles.statusDotRow}>
                 <View
                   style={[
-                    styles.iconBg,
-                    { backgroundColor: "rgba(59, 130, 246, 0.1)" },
+                    styles.statusDot,
+                    {
+                      backgroundColor: isNotifEnabled
+                        ? theme.success
+                        : theme.danger,
+                    },
                   ]}
-                >
-                  <Ionicons
-                    name="calendar-outline"
-                    size={18}
-                    color={theme.brand}
-                  />
-                </View>
-                <View>
-                  <Text style={styles.settingRowTitle}>General Alerts</Text>
-                  <Text style={styles.settingRowSub}>
-                    Classes (5m) & Tasks (15m)
-                  </Text>
-                </View>
+                />
+                <Text style={[styles.statusText, { color: theme.text }]}>
+                  {isNotifEnabled ? "Enabled" : "Disabled"}
+                </Text>
               </View>
-              <Switch
-                value={generalNotifs}
-                onValueChange={toggleGeneralNotifs}
-                trackColor={{ false: theme.border, true: theme.brand }}
-                ios_backgroundColor={theme.border}
-              />
+              <Text
+                style={[styles.lastSyncText, { marginLeft: 0, marginTop: 4 }]}
+              >
+                {isNotifEnabled
+                  ? "You are receiving tasks, prayers, and class alerts."
+                  : "Tap below to manage alerts in your device settings."}
+              </Text>
             </View>
-            <View style={styles.divider} />
-            <View style={styles.settingRow}>
-              <View style={styles.settingRowLeft}>
-                <View
-                  style={[
-                    styles.iconBg,
-                    { backgroundColor: "rgba(16, 185, 129, 0.1)" },
-                  ]}
-                >
-                  <Ionicons
-                    name="moon-outline"
-                    size={18}
-                    color={theme.success}
-                  />
-                </View>
-                <View>
-                  <Text style={styles.settingRowTitle}>Prayer Alerts</Text>
-                  <Text style={styles.settingRowSub}>
-                    5 Daily Namaz Reminders
-                  </Text>
-                </View>
-              </View>
-              <Switch
-                value={prayerNotifs}
-                onValueChange={togglePrayerNotifs}
-                trackColor={{ false: theme.border, true: theme.success }}
-                ios_backgroundColor={theme.border}
-              />
-            </View>
+
+            <TouchableOpacity
+              style={styles.connectPortalBtn}
+              activeOpacity={0.8}
+              onPress={Linking.openSettings}
+            >
+              <Text
+                style={[styles.connectPortalTitle, { color: theme.background }]}
+              >
+                {isNotifEnabled ? "Manage Settings" : "Enable Notifications"}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.sectionHeading}>SUPPORT</Text>
@@ -769,20 +710,32 @@ export default function SettingsScreen() {
                   {isOffline
                     ? "Network Unavailable"
                     : userData?.isPortalConnected
-                      ? "Connected & Syncing"
+                      ? "Live Auto-Sync Active"
                       : "Not Connected"}
                 </Text>
               </View>
-              {userData?.isPortalConnected && userData.lastSyncAt && (
-                <Text style={styles.lastSyncText}>
-                  Last Sync:{" "}
-                  {new Date(userData.lastSyncAt).toLocaleString([], {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+
+              {userData?.isPortalConnected ? (
+                <Text
+                  style={[
+                    styles.lastSyncText,
+                    { color: theme.success, opacity: 0.8 },
+                  ]}
+                >
+                  Running autonomously in background
                 </Text>
+              ) : (
+                userData?.lastSyncAt && (
+                  <Text style={[styles.lastSyncText, { color: theme.danger }]}>
+                    Stopped:{" "}
+                    {new Date(userData.lastSyncAt).toLocaleString([], {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </Text>
+                )
               )}
             </View>
 

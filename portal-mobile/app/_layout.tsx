@@ -1,13 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import * as Notifications from "expo-notifications";
-import { Stack } from "expo-router";
+import { Stack, router } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useState } from "react";
 import { Platform, View } from "react-native";
 
 // Import your custom animated splash component
 import AnimatedSplashScreen from "../components/AnimatedSplashScreen";
+// 🚀 IMPORT THE BACKGROUND SCRAPER ENGINE
+import { registerBackgroundSync } from "../services/syncService";
 
 // 1. Keep the native splash screen visible while we render our custom one
 SplashScreen.preventAutoHideAsync();
@@ -98,10 +100,27 @@ export default function RootLayout() {
     requestPermissions();
     setupNotificationCategories();
 
+    // 🚀 TURN ON THE BACKGROUND SCRAPER HERE
+    registerBackgroundSync();
+
     const responseListener =
       Notifications.addNotificationResponseReceivedListener(
         async (response) => {
           const actionId = response.actionIdentifier;
+          const data = response.notification.request.content.data;
+
+          // 🚨 EXPIRED SESSION WATCHDOG 🚨
+          if (data?.type === "session_expired") {
+            await Notifications.dismissNotificationAsync(
+              response.notification.request.identifier,
+            );
+            // ROUTE TO SETTINGS AND PASS THE AUTO-LAUNCH COMMAND
+            router.push({
+              pathname: "/(tabs)/settings",
+              params: { autoLaunch: "true" },
+            });
+            return;
+          }
 
           if (actionId === "ACKNOWLEDGE") {
             // 1. Dismiss the notification from the screen

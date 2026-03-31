@@ -6,16 +6,23 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
-    },
-    "preview": {
       "distribution": "internal",
       "android": {
         "image": "ubuntu-22.04-jdk-17-ndk-r26b"
       }
     },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "image": "ubuntu-22.04-jdk-17-ndk-r26b"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://to-do-web-01.onrender.com/api"
+      }
+    },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "buildType": "apk"
     }
   },
   "submit": {

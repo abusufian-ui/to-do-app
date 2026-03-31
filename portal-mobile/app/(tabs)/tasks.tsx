@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import axios from "axios";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -23,25 +24,26 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import UCPLogo from "../../components/UCPLogo";
 
+// --- 🎨 UPGRADED PREMIUM COLOR PALETTE ---
 const Colors = {
   light: {
-    background: "#FFFFFF",
-    text: "#000000",
-    subtext: "#737373",
-    border: "#E5E5E5",
-    card: "#FAFAFA",
-    invertedBg: "#000000",
+    background: "#F4F4F5", // Slight off-white for better contrast
+    text: "#09090B",
+    subtext: "#71717A",
+    border: "#E4E4E7",
+    card: "#FFFFFF",
+    invertedBg: "#09090B",
     invertedText: "#FFFFFF",
     danger: "#EF4444",
     brand: "#3B82F6",
     success: "#10B981",
   },
   dark: {
-    background: "#000000",
-    text: "#FFFFFF",
-    subtext: "#A3A3A3",
-    border: "#262626",
-    card: "#0A0A0A",
+    background: "#000000", // True black
+    text: "#FAFAFA",
+    subtext: "#A1A1AA",
+    border: "#27272A", // Sleek dark zinc border
+    card: "#09090B", // Very deep grey/black for cards
     invertedBg: "#FFFFFF",
     invertedText: "#000000",
     danger: "#F87171",
@@ -53,42 +55,22 @@ const Colors = {
 const getPriorityConfig = (priority: string) => {
   switch (priority) {
     case "Critical":
-      return {
-        color: "#EF4444",
-        bg: "rgba(239, 68, 68, 0.15)",
-        isDouble: true,
-      };
+      return { color: "#EF4444", bg: "rgba(239, 68, 68, 0.15)" };
     case "High":
-      return {
-        color: "#F97316",
-        bg: "rgba(249, 115, 22, 0.15)",
-        isDouble: false,
-      };
+      return { color: "#F97316", bg: "rgba(249, 115, 22, 0.15)" };
     case "Medium":
-      return {
-        color: "#EAB308",
-        bg: "rgba(234, 179, 8, 0.15)",
-        isDouble: false,
-      };
+      return { color: "#EAB308", bg: "rgba(234, 179, 8, 0.15)" };
     case "Low":
-      return {
-        color: "#3B82F6",
-        bg: "rgba(59, 130, 246, 0.15)",
-        isDouble: false,
-      };
+      return { color: "#3B82F6", bg: "rgba(59, 130, 246, 0.15)" };
     default:
-      return {
-        color: "#737373",
-        bg: "rgba(115, 115, 115, 0.15)",
-        isDouble: false,
-      };
+      return { color: "#71717A", bg: "rgba(113, 113, 122, 0.15)" };
   }
 };
 
 const getStatusConfig = (status: string) => {
   switch (status) {
     case "Scheduled":
-      return { icon: "calendar-outline", color: "#A3A3A3", label: "Scheduled" };
+      return { icon: "calendar-outline", color: "#A1A1AA", label: "Scheduled" };
     case "In Progress":
       return { icon: "time-outline", color: "#EAB308", label: "In Progress" };
     case "New task":
@@ -97,7 +79,7 @@ const getStatusConfig = (status: string) => {
     case "Completed":
       return { icon: "checkmark-circle", color: "#22C55E", label: "Completed" };
     default:
-      return { icon: "ellipse-outline", color: "#737373", label: status };
+      return { icon: "ellipse-outline", color: "#71717A", label: status };
   }
 };
 
@@ -176,7 +158,7 @@ export default function TasksScreen() {
           height={size}
           color={
             color === theme.subtext && theme === Colors.dark
-              ? "#A3A3A3"
+              ? "#A1A1AA"
               : theme.text
           }
         />
@@ -255,10 +237,8 @@ export default function TasksScreen() {
         }));
 
       if (cTasks) {
-        const mergedCache = [...JSON.parse(cTasks), ...offlineAdds];
-        setTasks(mergedCache);
+        setTasks([...JSON.parse(cTasks), ...offlineAdds]);
       }
-
       if (cCourses) setCourses(JSON.parse(cCourses));
       if (cTimetable) setTimetable(JSON.parse(cTimetable));
       if (cTasks || cCourses) setIsLoading(false);
@@ -283,11 +263,10 @@ export default function TasksScreen() {
         .filter((q: any) => q.type === "ADD" && q.endpoint === "/tasks")
         .map((q: any) => ({ ...q.payload, _id: q.id, isUnsynced: true }));
 
-      const mergedFresh = [...taskRes.data, ...remainingOfflineAdds];
-      setTasks(mergedFresh);
-
+      setTasks([...taskRes.data, ...remainingOfflineAdds]);
       setCourses(courseRes.data);
       setTimetable(ttRes.data);
+
       AsyncStorage.setItem("off_tasks_data", JSON.stringify(taskRes.data));
       AsyncStorage.setItem("off_tasks_courses", JSON.stringify(courseRes.data));
       AsyncStorage.setItem("off_timetable_data", JSON.stringify(ttRes.data));
@@ -298,6 +277,13 @@ export default function TasksScreen() {
       setRefreshing(false);
     }
   };
+
+  // 🚀 ISSUE 1 FIX: Auto-refresh silently when the tab comes into focus!
+  useFocusEffect(
+    useCallback(() => {
+      loadDataAndSync();
+    }, []),
+  );
 
   const flushQueue = async (queue: any[], token: string, baseUrl: string) => {
     let remainingQueue = [...queue];
@@ -349,10 +335,6 @@ export default function TasksScreen() {
       { id: Date.now().toString() + Math.random(), type, taskId, payload },
     ]);
   };
-
-  useEffect(() => {
-    loadDataAndSync();
-  }, []);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -478,7 +460,9 @@ export default function TasksScreen() {
 
   const renderTask = (task: any) => {
     const priority = getPriorityConfig(task.priority);
-    const status = getStatusConfig(task.status);
+    // 🚀 ISSUE 2 FIX: If completed is true, force the status config to read "Completed" regardless of the backend string!
+    const displayStatus = task.completed ? "Completed" : task.status;
+    const status = getStatusConfig(displayStatus);
     const isSelected = selectedTaskIds.includes(task._id);
 
     return (
@@ -499,7 +483,7 @@ export default function TasksScreen() {
         }}
         style={[
           styles.taskCard,
-          task.status === "Completed" && styles.taskCardCompleted,
+          task.completed && styles.taskCardCompleted,
           isSelected && {
             borderColor: theme.brand,
             backgroundColor: theme.brand + "10",
@@ -519,7 +503,7 @@ export default function TasksScreen() {
             <Text
               style={[
                 styles.taskTitle,
-                task.status === "Completed" && styles.taskTitleCompleted,
+                task.completed && styles.taskTitleCompleted,
               ]}
               numberOfLines={2}
             >
@@ -639,12 +623,10 @@ export default function TasksScreen() {
         </View>
       </Modal>
 
-      {/* --- COLLAPSIBLE HEADER (FIXES BLANK SPACE) --- */}
       <View style={[styles.header, !isHeaderActive && { display: "none" }]}>
         <Text style={styles.headerTitle}>
           {isSelectionMode ? `${selectedTaskIds.length} Selected` : ""}
         </Text>
-
         <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
           {isSelectionMode ? (
             <TouchableOpacity
@@ -731,18 +713,26 @@ export default function TasksScreen() {
         </ScrollView>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.text}
-          />
-        }
-      >
-        {displayedTasks.map(renderTask)}
-      </ScrollView>
+      {isLoading && !tasks.length ? (
+        <View
+          style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+        >
+          <ActivityIndicator size="large" color={theme.brand} />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.text}
+            />
+          }
+        >
+          {displayedTasks.map(renderTask)}
+        </ScrollView>
+      )}
 
       {isSelectionMode && selectedTaskIds.length > 0 && (
         <View style={styles.selectionBar}>
@@ -814,7 +804,6 @@ export default function TasksScreen() {
                   {isEditingTask ? "Edit Task" : "Task Summary"}
                 </Text>
               </View>
-
               <View
                 style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
               >
@@ -881,8 +870,6 @@ export default function TasksScreen() {
                         }}
                       >
                         <View style={{ marginTop: 2 }}>
-                          {/* Micro-adjustment to align icon with text baseline */}
-                          {/* DYNAMIC UCP ICON INJECTED HERE */}
                           {renderCourseIcon(
                             selectedTask?.course,
                             14,
@@ -899,7 +886,6 @@ export default function TasksScreen() {
                         </Text>
                       </View>
                     </View>
-
                     <View style={[styles.summaryGridItem, { width: "100%" }]}>
                       <Text style={styles.gridLabel}>Date & Time</Text>
                       <Text style={styles.gridValue}>
@@ -907,7 +893,6 @@ export default function TasksScreen() {
                         {selectedTask?.time ? `• ${selectedTask?.time}` : ""}
                       </Text>
                     </View>
-
                     <View style={styles.summaryGridItem}>
                       <Text style={styles.gridLabel}>Priority</Text>
                       <Text
@@ -922,18 +907,23 @@ export default function TasksScreen() {
                         {selectedTask?.priority}
                       </Text>
                     </View>
-
                     <View style={styles.summaryGridItem}>
                       <Text style={styles.gridLabel}>Status</Text>
                       <Text
                         style={[
                           styles.gridValue,
                           {
-                            color: getStatusConfig(selectedTask?.status).color,
+                            color: getStatusConfig(
+                              selectedTask?.completed
+                                ? "Completed"
+                                : selectedTask?.status,
+                            ).color,
                           },
                         ]}
                       >
-                        {selectedTask?.status}
+                        {selectedTask?.completed
+                          ? "Completed"
+                          : selectedTask?.status}
                       </Text>
                     </View>
                   </View>
@@ -1197,7 +1187,7 @@ const getStyles = (theme: any) =>
       borderWidth: 1,
       borderColor: theme.border,
     },
-    taskCardCompleted: { opacity: 0.6, backgroundColor: theme.background },
+    taskCardCompleted: { opacity: 0.5, backgroundColor: theme.background },
     taskHeader: {
       flexDirection: "row",
       alignItems: "flex-start",

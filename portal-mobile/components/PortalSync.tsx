@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage"; // 🚨 ADDED STORAGE IMPORT
 import CookieManager from "@react-native-cookies/cookies";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Animated, StyleSheet, Text, View } from "react-native";
@@ -452,6 +453,9 @@ const PortalSync: React.FC<PortalSyncProps> = ({
         .map((key) => `${key}=${mergedCookies[key].value}`)
         .join("; ");
       scrapedData.ucpCookie = cookieString;
+
+      // 🚨 SAVING COOKIE TO PHONE LOCAL STORAGE FOR NATIVE SCRAPER
+      await AsyncStorage.setItem("ucpCookie", cookieString);
 
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
