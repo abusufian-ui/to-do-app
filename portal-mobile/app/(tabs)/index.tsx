@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router"; // 🚨 Added useFocusEffect
+import React, { useCallback, useEffect, useMemo, useState } from "react"; // 🚨 Added useCallback
 import {
   ActivityIndicator,
+  AppState,
   LayoutAnimation,
   Linking,
   Platform,
@@ -18,6 +19,7 @@ import {
   View,
 } from "react-native";
 import UCPLogo from "../../components/UCPLogo";
+import { forceRunScraper } from "../../services/syncService";
 
 if (
   Platform.OS === "android" &&
@@ -369,15 +371,94 @@ export default function HomeScreen() {
     }
   };
 
+  // 🚨 SMART TAB-FOCUS SYNC
+  // This triggers silently every single time you navigate to the Dashboard tab
+  useFocusEffect(
+    useCallback(() => {
+      const syncTabState = async () => {
+        try {
+          const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+          const token = await AsyncStorage.getItem("userToken");
+
+          if (BACKEND_URL && token) {
+            // Silently check ONLY Namaz and Tasks to see if you updated them in other tabs
+            const [namazRes, tasksRes] = await Promise.all([
+              axios.get(`${BACKEND_URL}/namaz/today`, {
+                headers: { "x-auth-token": token },
+              }),
+              axios.get(`${BACKEND_URL}/tasks`, {
+                headers: { "x-auth-token": token },
+              }),
+            ]);
+
+            setNamazRecord(namazRes.data);
+            setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
+
+            // Update cache silently
+            AsyncStorage.setItem(
+              "off_dash_namaz",
+              JSON.stringify(namazRes.data),
+            );
+            AsyncStorage.setItem(
+              "off_dash_tasks",
+              JSON.stringify(tasksRes.data),
+            );
+          }
+        } catch (e) {
+          console.log("Tab sync skipped.");
+        }
+      };
+
+      syncTabState();
+    }, []),
+  );
+
+  // 🚨 SMART HYBRID ENGINE (Foreground + Background)
   useEffect(() => {
+    // 1. Fetch whatever is currently cached instantly so the UI loads fast
     fetchDashboardData();
+
+    // 2. The Silent Scraper Engine
+    const runSilentForegroundSync = async () => {
+      try {
+        console.log("📱 App is active! Running silent 3-second scrape...");
+        await forceRunScraper(); // Hits UCP directly
+        await fetchDashboardData(); // Pulls the fresh data from your Render DB
+      } catch (e) {
+        console.log("Silent sync skipped.");
+      }
+    };
+
+    // 3. Run it once immediately when the dashboard first mounts
+    runSilentForegroundSync();
+
+    // 4. Listen for the user switching back to the app from another app
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        runSilentForegroundSync();
+      }
+    });
+
+    // 5. Keep the normal 1-minute fallback for pulling from the backend
     const interval = setInterval(fetchDashboardData, 60000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
   }, []);
 
-  const onRefresh = () => {
+  // 🚨 FAST PULL-TO-REFRESH (NO FREEZING)
+  const onRefresh = async () => {
     setRefreshing(true);
-    fetchDashboardData();
+    try {
+      console.log("🔄 Pull-to-refresh triggered! Fetching latest DB data...");
+      await fetchDashboardData();
+    } catch (error) {
+      console.log("Manual refresh failed:", error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // --- SMART DASHBOARD FILTERING ---

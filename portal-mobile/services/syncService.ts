@@ -225,11 +225,11 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
 export async function registerBackgroundSync() {
   try {
     await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
-      minimumInterval: 60,
+      minimumInterval: 900, // 🚀 15 Minutes: The "Golden Rule" for mobile OS
       stopOnTerminate: false,
       startOnBoot: true,
     });
-    console.log("🔋 Background Sync Engine Registered successfully!");
+    console.log("🔋 Background Sync Engine Registered (15m Interval)!");
   } catch (err) {
     console.log("Failed to register background sync:", err);
   }

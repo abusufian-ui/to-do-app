@@ -222,12 +222,13 @@ export default function HabitsScreen() {
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
 
-      // Optmistic Update
-      const oldRecord = { ...namazRecord };
-      const tempRecord = { ...namazRecord };
-      if (tempRecord.prayers[prayerName] === "pending")
+      // 🚨 FIXED: Safe Deep Copy so UI doesn't glitch during optimistic update
+      const tempRecord = JSON.parse(JSON.stringify(namazRecord));
+      if (tempRecord.prayers[prayerName] === "pending") {
         tempRecord.prayers[prayerName] = "offered";
-      else tempRecord.prayers[prayerName] = "qazah";
+      } else if (tempRecord.prayers[prayerName] === "missed") {
+        tempRecord.prayers[prayerName] = "qazah";
+      }
       setNamazRecord(tempRecord);
 
       const res = await axios.post(
