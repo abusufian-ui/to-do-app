@@ -7,7 +7,13 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +35,7 @@ import {
 } from "react-native";
 
 import UCPLogo from "../../components/UCPLogo";
+import useLiveSync from "../hooks/useLiveSync";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -167,7 +174,7 @@ export default function KeynotesScreen({ navigation }: any) {
     }, 3500);
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -190,7 +197,7 @@ export default function KeynotesScreen({ navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -201,6 +208,7 @@ export default function KeynotesScreen({ navigation }: any) {
     };
   }, [navigation]);
 
+  useLiveSync(fetchData);
   const filteredKeynotes = useMemo(() => {
     let filtered = [...keynotes];
     if (selectedCourse) {

@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import { useFocusEffect, useRouter } from "expo-router"; // 🚨 Added useFocusEffect
-import React, { useCallback, useEffect, useMemo, useState } from "react"; // 🚨 Added useCallback
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import UCPLogo from "../../components/UCPLogo";
 import { forceRunScraper } from "../../services/syncService";
+import useLiveSync from "../hooks/useLiveSync";
 
 if (
   Platform.OS === "android" &&
@@ -42,7 +43,6 @@ const Colors = {
     danger: "#EF4444",
     brand: "#3B82F6",
     success: "#10B981",
-    // Vibrant Accents
     emerald: "#10B981",
     emeraldBg: "#D1FAE5",
     rose: "#F43F5E",
@@ -64,7 +64,6 @@ const Colors = {
     danger: "#F87171",
     brand: "#60A5FA",
     success: "#34D399",
-    // Vibrant Accents
     emerald: "#34D399",
     emeraldBg: "rgba(16, 185, 129, 0.15)",
     rose: "#FB7185",
@@ -114,11 +113,9 @@ export default function HomeScreen() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
 
-  // NEW STATES FOR DASHBOARD
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
   const [submissionsData, setSubmissionsData] = useState<any[]>([]);
 
-  // --- SMART NAMAZ STATES ---
   const [namazRecord, setNamazRecord] = useState<any>(null);
   const [prayerTimings, setPrayerTimings] = useState<any>(null);
   const [prayerState, setPrayerState] = useState<{
@@ -132,7 +129,6 @@ export default function HomeScreen() {
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
 
-  // --- PRAYER COUNTDOWN ENGINE ---
   useEffect(() => {
     if (!prayerTimings) return;
 
@@ -155,8 +151,8 @@ export default function HomeScreen() {
         })
         .sort((a, b) => a.time.getTime() - b.time.getTime());
 
-      let currentPrayer = prayerEntries[prayerEntries.length - 1]; // Default Isha
-      let nextPrayer = prayerEntries[0]; // Default Fajr (tomorrow)
+      let currentPrayer = prayerEntries[prayerEntries.length - 1];
+      let nextPrayer = prayerEntries[0];
       let isNextTomorrow = true;
 
       for (let i = 0; i < prayerEntries.length; i++) {
@@ -277,17 +273,17 @@ export default function HomeScreen() {
 
       const timestamp = Date.now();
       const results = await Promise.allSettled([
-        axios.get(`${BACKEND_URL}/auth/user?t=${timestamp}`, config), // 0
-        axios.get(`${BACKEND_URL}/student-stats?t=${timestamp}`, config), // 1
-        axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config), // 2
-        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config), // 3
-        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config), // 4
-        axios.get(`${BACKEND_URL}/attendance?t=${timestamp}`, config), // 5
-        axios.get(`${BACKEND_URL}/submissions?t=${timestamp}`, config), // 6
-        axios.get(`${BACKEND_URL}/namaz/today?t=${timestamp}`, config), // 7
+        axios.get(`${BACKEND_URL}/auth/user?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/student-stats?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/timetable?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/tasks?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/courses?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/attendance?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/submissions?t=${timestamp}`, config),
+        axios.get(`${BACKEND_URL}/namaz/today?t=${timestamp}`, config),
         axios.get(
           `https://api.aladhan.com/v1/timingsByCity?city=Lahore&country=Pakistan&method=1`,
-        ), // 8
+        ),
       ]);
 
       const isAnyRejected = results.some(
@@ -371,8 +367,8 @@ export default function HomeScreen() {
     }
   };
 
-  // 🚨 SMART TAB-FOCUS SYNC
-  // This triggers silently every single time you navigate to the Dashboard tab
+  useLiveSync(fetchDashboardData);
+
   useFocusEffect(
     useCallback(() => {
       const syncTabState = async () => {
@@ -381,7 +377,6 @@ export default function HomeScreen() {
           const token = await AsyncStorage.getItem("userToken");
 
           if (BACKEND_URL && token) {
-            // Silently check ONLY Namaz and Tasks to see if you updated them in other tabs
             const [namazRes, tasksRes] = await Promise.all([
               axios.get(`${BACKEND_URL}/namaz/today`, {
                 headers: { "x-auth-token": token },
@@ -394,7 +389,6 @@ export default function HomeScreen() {
             setNamazRecord(namazRes.data);
             setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : []);
 
-            // Update cache silently
             AsyncStorage.setItem(
               "off_dash_namaz",
               JSON.stringify(namazRes.data),
@@ -413,33 +407,27 @@ export default function HomeScreen() {
     }, []),
   );
 
-  // 🚨 SMART HYBRID ENGINE (Foreground + Background)
   useEffect(() => {
-    // 1. Fetch whatever is currently cached instantly so the UI loads fast
     fetchDashboardData();
 
-    // 2. The Silent Scraper Engine
     const runSilentForegroundSync = async () => {
       try {
         console.log("📱 App is active! Running silent 3-second scrape...");
-        await forceRunScraper(); // Hits UCP directly
-        await fetchDashboardData(); // Pulls the fresh data from your Render DB
+        await forceRunScraper();
+        await fetchDashboardData();
       } catch (e) {
         console.log("Silent sync skipped.");
       }
     };
 
-    // 3. Run it once immediately when the dashboard first mounts
     runSilentForegroundSync();
 
-    // 4. Listen for the user switching back to the app from another app
     const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (nextAppState === "active") {
         runSilentForegroundSync();
       }
     });
 
-    // 5. Keep the normal 1-minute fallback for pulling from the backend
     const interval = setInterval(fetchDashboardData, 60000);
 
     return () => {
@@ -448,7 +436,6 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // 🚨 FAST PULL-TO-REFRESH (NO FREEZING)
   const onRefresh = async () => {
     setRefreshing(true);
     try {
@@ -461,7 +448,6 @@ export default function HomeScreen() {
     }
   };
 
-  // --- SMART DASHBOARD FILTERING ---
   const getStartOfWeek = () => {
     const d = new Date();
     const day = d.getDay();
@@ -878,7 +864,8 @@ export default function HomeScreen() {
                 <Text style={styles.sectionTitle}>Pending Submissions</Text>
               </View>
               <View style={styles.taskList}>
-                {activeSubmissions.slice(0, 3).map((sub: any, idx: number) => {
+                {/* 🚨 REMOVED .slice(0, 3) TO SHOW ALL SUBMISSIONS 🚨 */}
+                {activeSubmissions.map((sub: any, idx: number) => {
                   const daysLeftText = getDaysLeft(sub.dueDate);
                   const isUrgent =
                     daysLeftText.includes("Today") ||
@@ -893,7 +880,7 @@ export default function HomeScreen() {
                       }
                       style={[
                         styles.taskRow,
-                        idx === Math.min(activeSubmissions.length, 3) - 1 && {
+                        idx === activeSubmissions.length - 1 && {
                           borderBottomWidth: 0,
                         },
                       ]}
@@ -915,14 +902,11 @@ export default function HomeScreen() {
                         />
                       </View>
                       <View style={styles.taskInfo}>
-                        <Text style={styles.taskText} numberOfLines={1}>
-                          {sub.title}
-                        </Text>
-                        <Text style={styles.taskCourse} numberOfLines={1}>
-                          {sub.courseName}
-                        </Text>
+                        {/* 🚨 REMOVED numberOfLines={1} TO ALLOW TEXT WRAPPING */}
+                        <Text style={styles.taskText}>{sub.title}</Text>
+                        <Text style={styles.taskCourse}>{sub.courseName}</Text>
                       </View>
-                      <View style={{ alignItems: "flex-end" }}>
+                      <View style={{ alignItems: "flex-end", paddingLeft: 10 }}>
                         <Text
                           style={[
                             styles.subDate,
@@ -975,7 +959,8 @@ export default function HomeScreen() {
                         color={theme.text}
                         style={styles.ucpIcon}
                       />
-                      <Text style={styles.className} numberOfLines={1}>
+                      {/* 🚨 REMOVED numberOfLines={1} */}
+                      <Text style={styles.className}>
                         {cls.courseName || cls.name}
                       </Text>
                     </View>
@@ -1035,24 +1020,32 @@ export default function HomeScreen() {
                       )}
                     </View>
                     <View style={styles.taskInfo}>
+                      {/* 🚨 REMOVED numberOfLines={1} */}
                       <Text
                         style={[
                           styles.taskText,
                           isCompleting && styles.taskTextDone,
                         ]}
-                        numberOfLines={1}
                       >
                         {task.name}
                       </Text>
                       <View
                         style={{
                           flexDirection: "row",
-                          alignItems: "center",
+                          alignItems: "flex-start",
                           gap: 6,
+                          marginTop: 4,
                         }}
                       >
-                        {getCourseIcon(task.course)}
-                        <Text style={styles.taskCourse}>
+                        <View style={{ marginTop: 2 }}>
+                          {getCourseIcon(task.course)}
+                        </View>
+                        <Text
+                          style={[
+                            styles.taskCourse,
+                            { flex: 1, flexWrap: "wrap" },
+                          ]}
+                        >
                           {task.course || "General"}
                         </Text>
                         {isOverdue && (
@@ -1062,6 +1055,7 @@ export default function HomeScreen() {
                               fontWeight: "800",
                               color: theme.danger,
                               marginLeft: 4,
+                              marginTop: 2,
                             }}
                           >
                             PAST DUE
@@ -1235,23 +1229,26 @@ const getStyles = (theme: any) =>
       borderWidth: 1,
       borderColor: theme.border,
     },
+    // 🚨 ADJUSTED ALIGNMENT TO FLEX-START SO ICON DOESN'T FLOAT AWKWARDLY IN MULTILINE TEXT
     courseHeaderRow: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       marginBottom: 12,
     },
-    ucpIcon: { marginRight: 8 },
+    ucpIcon: { marginRight: 8, marginTop: 2 },
     className: {
       fontSize: 17,
       fontWeight: "800",
       color: theme.text,
       letterSpacing: -0.5,
       flex: 1,
+      lineHeight: 22, // Added line height for better multi-line readability
     },
     classFooter: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
+      marginTop: 8,
     },
     classDuration: { fontSize: 13, fontWeight: "600", color: theme.subtext },
     roomBadge: {
@@ -1273,9 +1270,10 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
       padding: 8,
     },
+    // 🚨 ADJUSTED ALIGNMENT TO FLEX-START
     taskRow: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       padding: 16,
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
@@ -1289,6 +1287,7 @@ const getStyles = (theme: any) =>
       borderColor: theme.border,
       justifyContent: "center",
       alignItems: "center",
+      marginTop: 2, // Keeps checkbox aligned with the first line of text
     },
     checkboxDone: {
       backgroundColor: theme.invertedBg,
@@ -1299,15 +1298,21 @@ const getStyles = (theme: any) =>
       fontSize: 16,
       fontWeight: "700",
       color: theme.text,
-      marginBottom: 4,
+      marginBottom: 6,
+      lineHeight: 22, // Added line height
     },
     taskTextDone: {
       textDecorationLine: "line-through",
       color: theme.subtext,
       fontStyle: "italic",
     },
-    taskCourse: { fontSize: 13, color: theme.subtext, fontWeight: "600" },
-    priorityDot: { width: 8, height: 8, borderRadius: 4 },
+    taskCourse: {
+      fontSize: 13,
+      color: theme.subtext,
+      fontWeight: "600",
+      lineHeight: 18,
+    },
+    priorityDot: { width: 8, height: 8, borderRadius: 4, marginTop: 8 },
 
     // --- NAMAZ CARD STYLES ---
     namazCard: {
@@ -1399,6 +1404,12 @@ const getStyles = (theme: any) =>
       borderRadius: 12,
       justifyContent: "center",
       alignItems: "center",
+      marginTop: 2, // Aligns icon with multi-line text
     },
-    subDate: { fontSize: 12, color: theme.subtext, fontWeight: "600" },
+    subDate: {
+      fontSize: 12,
+      color: theme.subtext,
+      fontWeight: "600",
+      marginTop: 4,
+    },
   });

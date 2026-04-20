@@ -17,13 +17,16 @@
         "image": "ubuntu-22.04-jdk-17-ndk-r26b"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://to-do-web-01.onrender.com/api"
+        "EXPO_PUBLIC_BACKEND_URL": "https://api.myportalucp.online/api"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://api.myportalucp.online/api"
       }
     }
   },

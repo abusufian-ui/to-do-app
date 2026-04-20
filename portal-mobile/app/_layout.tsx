@@ -4,7 +4,7 @@ import * as Notifications from "expo-notifications";
 import { Stack, router } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useState } from "react";
-import { Platform, View } from "react-native";
+import { Alert, Linking, Platform, View } from "react-native"; // 🚨 ADDED LINKING
 
 // Import your custom animated splash component
 import AnimatedSplashScreen from "../components/AnimatedSplashScreen";
@@ -85,6 +85,7 @@ export default function RootLayout() {
     });
 
     const requestPermissions = async () => {
+      // --- 1. ASK FOR NOTIFICATION PERMISSIONS ---
       const { status: existingStatus } =
         await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
@@ -92,8 +93,42 @@ export default function RootLayout() {
         const { status } = await Notifications.requestPermissionsAsync();
         finalStatus = status;
       }
+
       if (finalStatus !== "granted") {
         console.log("Notification permissions denied!");
+      }
+
+      // --- 2. ASK FOR BACKGROUND BATTERY PERMISSION (ANDROID ONLY) ---
+      if (Platform.OS === "android") {
+        // We check AsyncStorage so we don't spam the user every time they open the app
+        const hasAskedBattery =
+          await AsyncStorage.getItem("hasAskedBatteryOpt");
+
+        if (!hasAskedBattery) {
+          // Add a tiny delay so the notification prompt has time to close
+          setTimeout(async () => {
+            Alert.alert(
+              "Keep Session Alive 🔋",
+              "To ensure your UCP session doesn't expire, please tap 'Allow', then select 'Battery', and choose 'Unrestricted' on the next screen.",
+              [
+                { text: "Later", style: "cancel" },
+                {
+                  text: "Allow",
+                  onPress: async () => {
+                    try {
+                      // 🚨 BULLETPROOF NATIVE ROUTING 🚨
+                      await Linking.openSettings();
+                      // Mark that we have successfully asked them
+                      await AsyncStorage.setItem("hasAskedBatteryOpt", "true");
+                    } catch (e) {
+                      console.log("Failed to open settings:", e);
+                    }
+                  },
+                },
+              ],
+            );
+          }, 1000); // 1 second delay
+        }
       }
     };
 

@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import * as Clipboard from "expo-clipboard";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import UCPLogo from "../../components/UCPLogo";
+import useLiveSync from "../hooks/useLiveSync";
 
 const Colors = {
   light: {
@@ -313,7 +314,7 @@ export default function NotesScreen() {
     return null; // Fallback to "General" if both fail
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [cNotes, cCourses, cTime] = await Promise.all([
         AsyncStorage.getItem("off_notes_data"),
@@ -387,11 +388,13 @@ export default function NotesScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  useLiveSync(fetchData);
 
   const toggleCourseSelect = (id: string) => {
     setSelectedCourses((prev) =>

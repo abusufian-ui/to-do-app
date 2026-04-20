@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import useLiveSync from "../hooks/useLiveSync";
 
 const Colors = {
   light: {
@@ -23,6 +24,7 @@ const Colors = {
     border: "#E5E5E5",
     card: "#FAFAFA",
     invertedBg: "#000000",
+    invertedText: "#FFFFFF",
     brand: "#3B82F6",
     success: "#10B981",
     danger: "#F43F5E",
@@ -36,6 +38,7 @@ const Colors = {
     border: "#262626",
     card: "#0A0A0A",
     invertedBg: "#FFFFFF",
+    invertedText: "#FFFFFF",
     brand: "#60A5FA",
     success: "#34D399",
     danger: "#FB7185",
@@ -178,7 +181,7 @@ export default function HabitsScreen() {
     btnColor: "",
   });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
@@ -211,11 +214,13 @@ export default function HabitsScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  useLiveSync(fetchData);
 
   const handleNamazAction = async (prayerName: string) => {
     try {

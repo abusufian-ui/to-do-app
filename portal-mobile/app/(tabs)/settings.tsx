@@ -31,6 +31,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+// 🚨 IMPORTED OUR NEW BACKGROUND ENGINE LOGIC
+import * as BackgroundFetch from "expo-background-fetch";
+import { forceRunScraper } from "../../services/syncService";
+
 import PortalSync from "../../components/PortalSync";
 import UCPLogo from "../../components/UCPLogo";
 
@@ -96,6 +100,7 @@ export default function SettingsScreen() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [isManualSyncing, setIsManualSyncing] = useState(false); // 🚨 ADDED FOR NEW BUTTON LOGIC
 
   // --- PORTAL SYNC STATE ---
   const [showPortal, setShowPortal] = useState(false);
@@ -739,23 +744,69 @@ export default function SettingsScreen() {
               )}
             </View>
 
+            {/* 🚨 THIS IS THE UPDATED SMART BUTTON 🚨 */}
             <TouchableOpacity
-              style={[styles.connectPortalBtn, isOffline && { opacity: 0.5 }]}
+              style={[
+                styles.connectPortalBtn,
+                (isOffline || isManualSyncing) && { opacity: 0.5 },
+              ]}
               activeOpacity={0.8}
-              disabled={isOffline}
-              onPress={() => {
-                if (!jwtToken)
+              disabled={isOffline || isManualSyncing}
+              onPress={async () => {
+                if (!jwtToken) {
                   Alert.alert("Error", "Please log in to MyPortal first.");
-                else setShowPortal(true);
+                  return;
+                }
+
+                if (userData?.isPortalConnected) {
+                  // 🚀 SCENARIO A: Trigger the Headless Background Scraper
+                  setIsManualSyncing(true);
+                  try {
+                    const result = await forceRunScraper();
+
+                    if (
+                      result === BackgroundFetch.BackgroundFetchResult.Failed ||
+                      result === BackgroundFetch.BackgroundFetchResult.NoData
+                    ) {
+                      // The cookie is dead or missing! Fallback to WebView to re-authenticate.
+                      Alert.alert(
+                        "Session Expired",
+                        "We need to re-authenticate your Microsoft session.",
+                      );
+                      setShowPortal(true);
+                    } else {
+                      // Success!
+                      Alert.alert(
+                        "Sync Complete",
+                        "Your portal data is fresh and up to date!",
+                      );
+                      fetchUserAndCourses(); // Refresh UI
+                    }
+                  } catch (e) {
+                    Alert.alert("Error", "Manual sync failed.");
+                  } finally {
+                    setIsManualSyncing(false);
+                  }
+                } else {
+                  // 🚀 SCENARIO B: First time connecting, open WebView
+                  setShowPortal(true);
+                }
               }}
             >
-              <Text
-                style={[styles.connectPortalTitle, { color: theme.background }]}
-              >
-                {userData?.isPortalConnected
-                  ? "Force Sync Now"
-                  : "Connect UCP Account"}
-              </Text>
+              {isManualSyncing ? (
+                <ActivityIndicator color={theme.background} size="small" />
+              ) : (
+                <Text
+                  style={[
+                    styles.connectPortalTitle,
+                    { color: theme.background },
+                  ]}
+                >
+                  {userData?.isPortalConnected
+                    ? "Force Sync Now"
+                    : "Connect UCP Account"}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
 

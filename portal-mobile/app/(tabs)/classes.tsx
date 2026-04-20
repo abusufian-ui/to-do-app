@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   LayoutAnimation,
@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 
 import UCPLogo from "../../components/UCPLogo";
+import useLiveSync from "../hooks/useLiveSync";
 
 if (
   Platform.OS === "android" &&
@@ -83,14 +84,15 @@ const WEEK_DAYS = [
 ];
 const DEGREE_TOTAL_CREDITS = 133;
 
+// 🚨 UPDATED ORDER: Moved 'Courses' to the end
 const SUB_TABS = [
-  { id: "courses", label: "Courses", icon: "library" },
   { id: "timetable", label: "Timetable", icon: "calendar" },
   { id: "attendance", label: "Attendance", icon: "checkmark-done" },
   { id: "submissions", label: "Submissions", icon: "document-text" },
   { id: "announcements", label: "Announcements", icon: "megaphone" },
   { id: "grades", label: "Grades", icon: "school" },
   { id: "history", label: "History", icon: "time" },
+  { id: "courses", label: "Courses", icon: "library" },
 ] as const;
 
 const isBelowAverage = (obtained: string, average: string) => {
@@ -170,15 +172,17 @@ export default function ClassesScreen() {
   const statusBarHeight =
     Platform.OS === "android" ? StatusBar.currentHeight : insets.top;
 
+  // 🚨 UPDATED INITIAL STATE: Defaults to 'timetable' now so it doesn't open on the last tab
   const [activeTab, setActiveTab] = useState<
-    | "courses"
     | "timetable"
     | "attendance"
     | "submissions"
     | "announcements"
     | "grades"
     | "history"
-  >("courses");
+    | "courses"
+  >("timetable");
+
   const [selectedDay, setSelectedDay] = useState("Monday");
 
   const [courses, setCourses] = useState([]);
@@ -207,7 +211,7 @@ export default function ClassesScreen() {
     string | null
   >(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [cCourses, cTime, cGrades, cHist, cStats, cAtt, cSub, cAnn, cHidd] =
         await Promise.all([
@@ -321,7 +325,9 @@ export default function ClassesScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
+
+  useLiveSync(fetchData);
 
   useEffect(() => {
     fetchData();

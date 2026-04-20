@@ -23,6 +23,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import UCPLogo from "../../components/UCPLogo";
+import useLiveSync from "../hooks/useLiveSync";
 
 // --- 🎨 UPGRADED PREMIUM COLOR PALETTE ---
 const Colors = {
@@ -277,6 +278,8 @@ export default function TasksScreen() {
       setRefreshing(false);
     }
   };
+
+  useLiveSync(loadDataAndSync);
 
   // 🚀 ISSUE 1 FIX: Auto-refresh silently when the tab comes into focus!
   useFocusEffect(

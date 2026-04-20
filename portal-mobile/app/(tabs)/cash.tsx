@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -17,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import useLiveSync from "../hooks/useLiveSync";
 
 const Colors = {
   light: {
@@ -72,7 +73,7 @@ export default function CashScreen() {
     type: "transactions" | "debts";
   } | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
       const token = await AsyncStorage.getItem("userToken");
@@ -101,11 +102,14 @@ export default function CashScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  // 🚀 MILLISECOND LIVE SYNC LISTENER (WEBSOCKETS)
+  useLiveSync(fetchData);
 
   // --- DELETE & UPDATE ACTIONS ---
   const promptDelete = (id: string, type: "transactions" | "debts") => {

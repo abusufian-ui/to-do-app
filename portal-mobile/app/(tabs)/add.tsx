@@ -58,13 +58,14 @@ const Colors = {
 };
 
 type TabItem = {
-  id: "transaction" | "task" | "note";
+  id: "transaction" | "debt" | "task" | "note";
   icon: ComponentProps<typeof Ionicons>["name"];
   label: string;
 };
 
 const TAB_DATA: TabItem[] = [
   { id: "transaction", icon: "wallet-outline", label: "Cash" },
+  { id: "debt", icon: "swap-horizontal-outline", label: "IOU" },
   { id: "task", icon: "checkbox-outline", label: "Task" },
   { id: "note", icon: "bulb-outline", label: "Snaps" },
 ];
@@ -103,9 +104,9 @@ export default function AddScreen({ navigation }: any) {
   const theme = useColorScheme() === "dark" ? Colors.dark : Colors.light;
   const styles = getStyles(theme);
 
-  const [activeTab, setActiveTab] = useState<"transaction" | "task" | "note">(
-    "transaction",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "transaction" | "debt" | "task" | "note"
+  >("transaction");
   const [isSaving, setIsSaving] = useState(false);
   const [courses, setCourses] = useState<any[]>([]);
   const [timetable, setTimetable] = useState<any[]>([]);
@@ -118,23 +119,37 @@ export default function AddScreen({ navigation }: any) {
     type: "success",
   });
 
+  // Date Pickers
   const [showTDatePicker, setShowTDatePicker] = useState(false);
   const [showTaskDatePicker, setShowTaskDatePicker] = useState(false);
   const [showTaskTimePicker, setShowTaskTimePicker] = useState(false);
+  const [showDebtDatePicker, setShowDebtDatePicker] = useState(false); // New Debt Datepicker
+
   const [tDateObj, setTDateObj] = useState(new Date());
   const [taskDateObj, setTaskDateObj] = useState(new Date());
   const [taskTimeObj, setTaskTimeObj] = useState(new Date());
+  const [debtDateObj, setDebtDateObj] = useState(new Date());
 
+  // Transaction States
   const [tType, setTType] = useState<"expense" | "income">("expense");
   const [tAmount, setTAmount] = useState("");
   const [tDesc, setTDesc] = useState("");
   const [tCategory, setTCategory] = useState("Food & Dining");
   const [tDate, setTDate] = useState(new Date().toISOString().split("T")[0]);
 
+  // Debt Integration States
   const [activeDebts, setActiveDebts] = useState<any[]>([]);
   const [selectedDebt, setSelectedDebt] = useState<any | null>(null);
   const [showDebtModal, setShowDebtModal] = useState(false);
 
+  // NEW DEBT/LOAN STATES (Matches web portal exactly)
+  const [debtType, setDebtType] = useState<"lent" | "borrowed">("lent");
+  const [debtPerson, setDebtPerson] = useState("");
+  const [debtAmount, setDebtAmount] = useState("");
+  const [debtDesc, setDebtDesc] = useState("");
+  const [debtDueDate, setDebtDueDate] = useState("");
+
+  // Task States
   const [taskTitle, setTaskTitle] = useState("");
   const [taskStatus, setTaskStatus] = useState("New task");
   const [taskCourse, setTaskCourse] = useState("");
@@ -143,6 +158,7 @@ export default function AddScreen({ navigation }: any) {
   const [taskTime, setTaskTime] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
 
+  // Note States
   const [noteTitle, setNoteTitle] = useState("");
   const [noteBody, setNoteBody] = useState("");
   const [noteCourse, setNoteCourse] = useState("");
@@ -157,7 +173,6 @@ export default function AddScreen({ navigation }: any) {
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | undefined>();
-
   const [showAttachMenu, setShowAttachMenu] = useState(false);
 
   const showToast = (
@@ -355,6 +370,14 @@ export default function AddScreen({ navigation }: any) {
     }
   };
 
+  const onDebtDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === "android") setShowDebtDatePicker(false);
+    if (selectedDate) {
+      setDebtDateObj(selectedDate);
+      setDebtDueDate(getLocalYYYYMMDD(selectedDate));
+    }
+  };
+
   const onTaskDateChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === "android") setShowTaskDatePicker(false);
     if (selectedDate) {
@@ -499,7 +522,6 @@ export default function AddScreen({ navigation }: any) {
 
         try {
           if (isDebtCategory && selectedDebt) {
-            // FIX 1: Detect partial payment and append to description
             const isPartial = payload.amount < selectedDebt.amount;
             const prefix = isPartial
               ? tType === "income"
@@ -508,7 +530,6 @@ export default function AddScreen({ navigation }: any) {
               : "Settled: ";
             const finalDescription = `${prefix}${selectedDebt.person} - ${payload.description}`;
 
-            // FIX 2: Send ALL required transaction data to the backend pay route
             await axios.post(
               `${BACKEND_URL}/debts/${selectedDebt._id}/pay`,
               {
@@ -536,6 +557,27 @@ export default function AddScreen({ navigation }: any) {
             );
           }
           saveOfflineQueue("ADD", "/transactions", payload);
+        }
+      } else if (activeTab === "debt") {
+        if (!debtPerson || !debtAmount) {
+          setIsSaving(false);
+          return showToast("Person's name and amount are required.", "error");
+        }
+
+        const payload: any = {
+          type: debtType,
+          person: debtPerson,
+          amount: Number(debtAmount),
+          description: debtDesc,
+        };
+        if (debtDueDate) payload.dueDate = debtDueDate;
+
+        try {
+          await axios.post(`${BACKEND_URL}/debts`, payload, { headers });
+          showToast("IOU Record created successfully!", "success");
+          await fetchInitialData();
+        } catch (e) {
+          saveOfflineQueue("ADD", "/debts", payload);
         }
       } else if (activeTab === "task") {
         if (!taskTitle) return showToast("Task Title is required.", "error");
@@ -648,6 +690,10 @@ export default function AddScreen({ navigation }: any) {
 
       setTAmount("");
       setTDesc("");
+      setDebtPerson("");
+      setDebtAmount("");
+      setDebtDesc("");
+      setDebtDueDate("");
       setTaskTitle("");
       setTaskCourse("");
       setTaskDate("");
@@ -868,7 +914,6 @@ export default function AddScreen({ navigation }: any) {
                         : theme.subtext
                     }
                   />
-                  {/* FIX 3: Removed numberOfLines={1} to allow wrapping */}
                   <Text
                     style={[
                       styles.gridItemText,
@@ -937,6 +982,98 @@ export default function AddScreen({ navigation }: any) {
               value={tDesc}
               onChangeText={setTDesc}
             />
+          </View>
+        )}
+
+        {/* --- DEBTS & LOANS TAB --- */}
+        {activeTab === "debt" && (
+          <View style={styles.formContainer}>
+            <View style={styles.segmentControl}>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  debtType === "lent" && {
+                    backgroundColor: theme.success + "20",
+                    borderColor: theme.success,
+                  },
+                ]}
+                onPress={() => setDebtType("lent")}
+              >
+                <Text
+                  style={[
+                    styles.segmentText,
+                    debtType === "lent" && { color: theme.success },
+                  ]}
+                >
+                  They Owe Me
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  debtType === "borrowed" && {
+                    backgroundColor: theme.warning + "20",
+                    borderColor: theme.warning,
+                  },
+                ]}
+                onPress={() => setDebtType("borrowed")}
+              >
+                <Text
+                  style={[
+                    styles.segmentText,
+                    debtType === "borrowed" && { color: theme.warning },
+                  ]}
+                >
+                  I Owe Them
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.label}>Person's Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Who is involved?"
+              placeholderTextColor={theme.subtext}
+              value={debtPerson}
+              onChangeText={setDebtPerson}
+            />
+
+            <Text style={styles.label}>Amount (PKR)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              placeholder="0.00"
+              placeholderTextColor={theme.subtext}
+              value={debtAmount}
+              onChangeText={setDebtAmount}
+            />
+
+            <Text style={styles.label}>Description (Optional)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Dinner, Movie tickets, etc."
+              placeholderTextColor={theme.subtext}
+              value={debtDesc}
+              onChangeText={setDebtDesc}
+            />
+
+            <Text style={styles.label}>Due Date (Optional)</Text>
+            <TouchableOpacity
+              style={styles.input}
+              onPress={() => setShowDebtDatePicker(true)}
+            >
+              <Text style={{ color: debtDueDate ? theme.text : theme.subtext }}>
+                {debtDueDate || "Select Date"}
+              </Text>
+            </TouchableOpacity>
+            {showDebtDatePicker && (
+              <DateTimePicker
+                value={debtDateObj}
+                mode="date"
+                display="default"
+                onChange={onDebtDateChange}
+              />
+            )}
           </View>
         )}
 
@@ -1423,9 +1560,15 @@ export default function AddScreen({ navigation }: any) {
           {isSaving ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <Text
-              style={styles.saveBtnText}
-            >{`Save ${activeTab === "note" ? "Snap" : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}</Text>
+            <Text style={styles.saveBtnText}>
+              {`Save ${
+                activeTab === "note"
+                  ? "Snap"
+                  : activeTab === "debt"
+                    ? "Record"
+                    : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)
+              }`}
+            </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -1486,7 +1629,7 @@ export default function AddScreen({ navigation }: any) {
         </TouchableOpacity>
       </Modal>
 
-      {/* --- DEBT MODAL --- */}
+      {/* --- DEBT MODAL FOR TRANSACTIONS --- */}
       <Modal visible={showDebtModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View
@@ -1504,7 +1647,6 @@ export default function AddScreen({ navigation }: any) {
                   onPress={() => {
                     setSelectedDebt(debt);
                     setShowDebtModal(false);
-                    // Helpful feature: Autofill amount if not typed yet
                     if (!tAmount) setTAmount(debt.amount.toString());
                   }}
                 >
@@ -1606,7 +1748,6 @@ const getStyles = (theme: any) =>
     },
     chipText: { fontSize: 13, fontWeight: "700", color: theme.subtext },
     gridContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-    // FIX 4: Updated grid item constraints for multi-line support
     gridItem: {
       width: "31%",
       backgroundColor: theme.card,
