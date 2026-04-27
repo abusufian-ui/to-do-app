@@ -36,6 +36,7 @@ export async function forceRunScraper() {
       axiosConfig,
     );
 
+    // 🚨 SMART SESSION CHECK
     if (
       enrolledRes.status === 302 ||
       typeof enrolledRes.data !== "string" ||
@@ -51,7 +52,7 @@ export async function forceRunScraper() {
         trigger: null,
       });
       await AsyncStorage.removeItem("ucpCookie");
-      return BackgroundFetch.BackgroundFetchResult.Failed;
+      return "SESSION_EXPIRED";
     }
 
     const $courses = cheerio.load(enrolledRes.data);
@@ -361,36 +362,97 @@ export async function forceRunScraper() {
       `📦 [SCRAPER] Extraction done. Sending ${attendanceData.length} attendance, ${announcementsData.length} announcements, ${submissionsData.length} submissions, ${gradesData.length} grades to Render...`,
     );
 
+    // --- 3.5 FETCH DATESHEET ---
+    console.log("📅 [SCRAPER] Fetching Datesheet...");
+    let datesheetData: any[] = [];
+    try {
+      const dsRes = await axios.get(
+        "https://horizon.ucp.edu.pk/student/exam/datesheet",
+        axiosConfig,
+      );
+      const $ds = cheerio.load(dsRes.data);
+
+      const pageText = $ds("body").text().toLowerCase();
+
+      if (
+        !pageText.includes("no exam") &&
+        !pageText.includes("no exams scheduled")
+      ) {
+        $ds("table tbody tr").each((_: number, row: any) => {
+          const tds = $ds(row).find("td");
+
+          if (tds.length >= 6 && !$ds(tds[0]).attr("colspan")) {
+            const courseName = $ds(tds[1]).text().trim();
+            const instructor = $ds(tds[2]).text().trim();
+            const date = $ds(tds[3]).text().trim();
+            const time = $ds(tds[4]).text().trim();
+            const venue = $ds(tds[5]).text().trim() || "TBA";
+
+            if (courseName && date) {
+              datesheetData.push({ courseName, instructor, date, time, venue });
+            }
+          }
+        });
+      }
+      console.log(
+        `✅ [SCRAPER] Datesheet parsed! Found: ${datesheetData.length} exams.`,
+      );
+    } catch (e: any) {
+      console.log("⚠️ [SCRAPER] Datesheet fetch failed or skipped:", e.message);
+    }
+
     // --- 4. SERVER HANDOFF ---
+    console.log(`🚀 [SCRAPER] Initiating Server Handoff to: ${BACKEND_URL}`);
+
     if (
       attendanceData.length > 0 ||
       announcementsData.length > 0 ||
       submissionsData.length > 0 ||
-      gradesData.length > 0
+      gradesData.length > 0 ||
+      datesheetData !== undefined
     ) {
-      await axios.post(
-        `${BACKEND_URL}/extension-sync`,
-        {
+      // 🚨 FIX: Replaced Axios with native Fetch to bypass the 8-second global timeout
+      // and prevent React Native bridge memory crashes with massive JSON payloads.
+      const syncRes = await fetch(`${BACKEND_URL}/extension-sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({
           portalId: "BACKGROUND_SYNC",
           attendanceData,
           announcementsData,
           submissionsData,
-          gradesData, // 🚨 Now safely included
+          gradesData,
           timetableData,
           historyData,
           statsData,
+          datesheetData,
           ucpCookie: cookie,
-        },
-        { headers: { "x-auth-token": token } },
-      );
+        }),
+      });
 
-      console.log("✅ [SCRAPER] 100% Full Unified Sync Complete!");
+      if (!syncRes.ok) {
+        throw new Error(
+          `Server failed to process payload: Status ${syncRes.status}`,
+        );
+      }
+
+      console.log(`✅ [SCRAPER] 100% Full Unified Sync Complete!`);
       return BackgroundFetch.BackgroundFetchResult.NewData;
     }
 
     return BackgroundFetch.BackgroundFetchResult.NoData;
-  } catch (error) {
-    console.error("❌ [SCRAPER] Fatal Sync Error:", error);
+  } catch (error: any) {
+    console.error("❌ [SCRAPER] Fatal Sync Error:", error.message || error);
+    // 🚨 SMART NETWORK ERROR DETECTION
+    if (
+      error.message &&
+      error.message.toLowerCase().includes("network error")
+    ) {
+      return "NETWORK_ERROR";
+    }
     return BackgroundFetch.BackgroundFetchResult.Failed;
   }
 }

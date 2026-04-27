@@ -159,6 +159,7 @@ export default function TabLayout() {
           }}
         />
 
+        {/* --- HIDDEN ROUTES FOR DRAWER/BUTTON NAVIGATION --- */}
         <Tabs.Screen
           name="habits"
           options={{ href: null, title: "Habit Protocol" }}
@@ -171,6 +172,12 @@ export default function TabLayout() {
         <Tabs.Screen
           name="KeynotesScreen"
           options={{ href: null, title: "Keynotes" }}
+        />
+
+        {/* 🚨 CRITICAL: Hides datesheet from bottom tab bar but allows routing */}
+        <Tabs.Screen
+          name="datesheet"
+          options={{ href: null, title: "Exam Schedule" }}
         />
       </Tabs>
 
@@ -223,6 +230,21 @@ export default function TabLayout() {
                 <Ionicons name="school-outline" size={22} color={theme.text} />
                 <Text style={[styles.menuItemText, { color: theme.text }]}>
                   Academics
+                </Text>
+              </TouchableOpacity>
+
+              {/* 🚨 NEW: Exam Schedule added to sidebar menu */}
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => navigateFromMenu("/datesheet")}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={22}
+                  color={theme.text}
+                />
+                <Text style={[styles.menuItemText, { color: theme.text }]}>
+                  Exam Schedule
                 </Text>
               </TouchableOpacity>
 

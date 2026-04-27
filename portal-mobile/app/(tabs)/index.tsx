@@ -116,6 +116,19 @@ export default function HomeScreen() {
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
   const [submissionsData, setSubmissionsData] = useState<any[]>([]);
 
+  // 🚨 NEW: LIVE EXAMS STATE AND TIME ENGINE
+  const [exams, setExams] = useState<any[]>([]);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Keep time synced
+  useFocusEffect(
+    useCallback(() => {
+      setCurrentTime(new Date());
+      const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+      return () => clearInterval(timer);
+    }, []),
+  );
+
   const [namazRecord, setNamazRecord] = useState<any>(null);
   const [prayerTimings, setPrayerTimings] = useState<any>(null);
   const [prayerState, setPrayerState] = useState<{
@@ -233,6 +246,7 @@ export default function HomeScreen() {
         cSub,
         cNamaz,
         cPtimings,
+        cExams, // 🚨 UPDATED TO FULL EXAM CACHE
       ] = await Promise.all([
         AsyncStorage.getItem("off_dash_user"),
         AsyncStorage.getItem("off_dash_stats"),
@@ -243,6 +257,7 @@ export default function HomeScreen() {
         AsyncStorage.getItem("off_dash_sub"),
         AsyncStorage.getItem("off_dash_namaz"),
         AsyncStorage.getItem("off_dash_ptimings"),
+        AsyncStorage.getItem("off_dash_exams"),
       ]);
 
       if (cUser) setUserName(JSON.parse(cUser));
@@ -254,6 +269,7 @@ export default function HomeScreen() {
       if (cSub) setSubmissionsData(JSON.parse(cSub));
       if (cNamaz) setNamazRecord(JSON.parse(cNamaz));
       if (cPtimings) setPrayerTimings(JSON.parse(cPtimings));
+      if (cExams) setExams(JSON.parse(cExams)); // 🚨 LOAD EXAMS FROM CACHE
 
       if (cUser || cTime || cTasks) setIsLoading(false);
 
@@ -284,10 +300,11 @@ export default function HomeScreen() {
         axios.get(
           `https://api.aladhan.com/v1/timingsByCity?city=Lahore&country=Pakistan&method=1`,
         ),
+        axios.get(`${BACKEND_URL}/datesheet?t=${timestamp}`, config), // 🚨 9: DATESHEET API
       ]);
 
       const isAnyRejected = results.some(
-        (r, idx) => r.status === "rejected" && idx < 7,
+        (r, idx) => r.status === "rejected" && idx < 8,
       );
       setIsOffline(isAnyRejected);
 
@@ -358,6 +375,17 @@ export default function HomeScreen() {
           JSON.stringify(results[8].value.data.data.timings),
         );
       }
+      // 🚨 UPDATED: SAVE FULL EXAM ARRAY
+      if (results[9]?.status === "fulfilled") {
+        const fetchedExams = Array.isArray(results[9].value.data)
+          ? results[9].value.data
+          : [];
+        setExams(fetchedExams);
+        AsyncStorage.setItem("off_dash_exams", JSON.stringify(fetchedExams));
+      }
+
+      // Update time so UI is perfectly synced after a fetch
+      setCurrentTime(new Date());
     } catch (error) {
       setIsOffline(true);
       console.log("Offline mode active.");
@@ -606,6 +634,50 @@ export default function HomeScreen() {
     return `Due in ${diffDays} days`;
   };
 
+  // 🚀 AUTO-EXPIRING EXAMS LOGIC (Powered by Live Time)
+  const activeExams = useMemo(() => {
+    if (!exams || exams.length === 0) return [];
+
+    const sortedExams = [...exams].sort(
+      (a, b) =>
+        new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime(),
+    );
+
+    const lastExam = sortedExams[sortedExams.length - 1];
+    const lastExamDate = new Date(lastExam.date || 0);
+
+    // Set expiration to 11:59:59 PM of the LAST exam day
+    lastExamDate.setHours(23, 59, 59, 999);
+
+    // If current live time crosses midnight of the last paper, array becomes empty!
+    if (currentTime <= lastExamDate) {
+      return sortedExams;
+    }
+
+    return [];
+  }, [exams, currentTime]);
+
+  const remainingExamsCount = useMemo(() => {
+    return activeExams.filter((e) => {
+      let targetDate = new Date(e.date || 0);
+      if (e.time) {
+        const startTimeMatch = e.time.match(/(\d{2}):(\d{2})/);
+        if (startTimeMatch) {
+          targetDate.setHours(
+            parseInt(startTimeMatch[1], 10) + 2,
+            parseInt(startTimeMatch[2], 10),
+            0,
+          );
+        } else {
+          targetDate.setHours(23, 59, 59, 999);
+        }
+      } else {
+        targetDate.setHours(23, 59, 59, 999);
+      }
+      return currentTime <= targetDate;
+    }).length;
+  }, [activeExams, currentTime]);
+
   return (
     <View style={styles.safeArea}>
       {isLoading ? (
@@ -636,6 +708,61 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
+
+          {/* 🚨 SMART: EXAMS SCHEDULED BANNER */}
+          {activeExams.length > 0 && (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => router.push("/datesheet" as any)}
+              style={{
+                backgroundColor: "#ef4444",
+                marginHorizontal: 24,
+                marginBottom: 25,
+                padding: 18,
+                borderRadius: 20,
+                flexDirection: "row",
+                alignItems: "center",
+                shadowColor: "#ef4444",
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.3,
+                shadowRadius: 12,
+                elevation: 6,
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.2)",
+                  padding: 12,
+                  borderRadius: 12,
+                  marginRight: 16,
+                }}
+              >
+                <Ionicons name="calendar" size={28} color="#ffffff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    color: "#ffffff",
+                    fontSize: 18,
+                    fontWeight: "800",
+                    marginBottom: 4,
+                  }}
+                >
+                  {remainingExamsCount} Exams Scheduled
+                </Text>
+                <Text
+                  style={{
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: 13,
+                    fontWeight: "600",
+                  }}
+                >
+                  Tap to view your datesheet & venues
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={24} color="#ffffff" />
+            </TouchableOpacity>
+          )}
 
           <View style={styles.bentoContainer}>
             {/* --- 1. HERO BOX (CLASS STATUS) --- */}
